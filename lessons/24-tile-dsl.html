@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 24 章 · Tile 模型与 kernel DSL：cuTile、Triton、CuTe DSL、TileLang、Helion · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="24-tile-kernel-dslcutiletritoncute-dsltilelanghelion">第 24 章 · Tile 模型与 kernel DSL：cuTile、Triton、CuTe DSL、TileLang、Helion</h1><p><a class="btn" href="../animations/24-simt-vs-tile.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：前面 23 章都在"替每个线程想"，有没有办法只描述"这个 block 处理哪一块数据、做什么运算"，剩下的交给编译器？CUDA 官方的 Tile 模型是什么？Triton、CuTe DSL、TileLang、Helion 这些 DSL 各在哪一层，什么时候选哪个？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/23-inference-kernels.html">第 23 章 推理 kernel</a> · 下一章：<a href="../lessons/25-compile-deploy.html">第 25 章 编译与部署</a><br />
+对应原文：PG §1.2.2.3 Tile Programming in CUDA（<code>materials/text/cuda-programming-guide.txt</code> 第 1172–1269 行）、§2.4 Writing Tile Kernels（第 4558–6308 行：声明第 4558 行、启动第 4625 行、建 tile 第 4726 行、读写 tile 第 4879 行、矩阵乘第 5588 行、归约 / scan 第 5687 行）；<code>docs/blog-cuda-tile-cpp.txt</code>；02 生态 §2；04 调研 §3.2（DSL 对比表）；cutile-rs tutorial 01–06</p>
+<p>本章缩写：DSL = Domain-Specific Language（领域专用语言）· IR = Intermediate Representation（中间表示）· Tile IR（CUDA Tile 的虚拟指令集）· TVM = Tensor Virtual Machine（Apache 的深度学习编译器，TileLang 的后端）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="block2026-11-14">第一步：从"每个线程"到"每个 block"（2026-11-14）</h3>
+<p>回头看前面写过的东西：线程编号（第 1 章）、合并访存的映射（第 6 章）、shared memory 分块和 bank（第 7、13 章）、寄存器分块（第 14 章）、Tensor Core 片段布局（第 15 章）、异步拷贝和流水线（第 16–18 章）……<strong>这些都是"把一块数据的运算，手工分配给 block 里的每个线程"。</strong></p>
+<p>PG §1.2.2.3 给出另一种写法——<strong>Tile 编程模型</strong>：</p>
+<blockquote>
+<p>程序员按<strong>整个 block</strong> 的视角写代码，描述对多维数据块（<strong>tile</strong>）的运算；编译器把这些运算映射到 block 的各个线程上。</p>
+</blockquote>
+<p>PG 图 8 的对比：SIMT 里程序员写每个线程的代码、控制每个线程怎么访问数据；Tile 里程序员写每个 block 的代码，<strong>block 里有几个线程都由编译器决定</strong>。</p>
+<p>几条规定（PG §1.2.2.3–1.2.2.3.1）：</p>
+<ul>
+<li>block 里只有<strong>一条控制流</strong>，所以<strong>没有 warp 分岔</strong>的概念；标量运算（算下标、循环边界）由一个线程做，tile 运算由全体线程一起做；</li>
+<li>tile 是<strong>不可变</strong>的值，每次运算产生新 tile；编译器决定它放在寄存器、shared memory 还是别处；</li>
+<li>tile 每一维必须是 <strong>2 的幂、编译期已知</strong>；</li>
+<li>数据靠 load / store 在全局数组和 tile 之间移动，用 <strong>tile space</strong>（把数组切成等大的 tile，用 tile 坐标 (i, j) 索引）——越界部分自动处理。</li>
+</ul>
+<h3 id="2026-11-14">第二步：同一个向量加法，两种写法（2026-11-14）</h3>
+<p>SIMT（第 1 章）：</p>
+<pre><code class="language-cpp">__global__ void vecAdd(float* a, float* b, float* c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i &lt; n) c[i] = a[i] + b[i];
+}
+</code></pre>
+<p>Tile（cuTile Python，PG §2.4 的写法）：</p>
+<pre><code class="language-python">import cuda.tile as ct
+
+@ct.kernel
+def vec_add(a, b, c, TILE: ct.Constant[int]):
+    bid = ct.bid(0)                         # 这个 block 负责第几个 tile
+    ta = ct.load(a, index=(bid,), shape=(TILE,))
+    tb = ct.load(b, index=(bid,), shape=(TILE,))
+    ct.store(c, index=(bid,), tile=ta + tb)
+</code></pre>
+<p>没有 <code>threadIdx</code>、没有 <code>if (i &lt; n)</code>（越界由 tile space 的边界处理负责）、没有 <code>__shared__</code>、没有 <code>__syncthreads()</code>。C++ 版是 <code>__tile_global__</code>（PG §2.4.1）；矩阵乘是 tile 原语 <code>ct.mma</code> / <code>mma</code>（PG §2.4.9.1），编译器替你选 <code>mma.sync</code> / <code>wgmma</code> / <code>tcgen05</code> 和 TMA。</p>
+<p><strong>同一份 Tile 代码跨架构可移植</strong>——这是 NVIDIA 推它的主要理由（CUDA 13.1 起 Python、13.3 起 C++，02 生态 §2）。Rust 的 cutile-rs 是同一个 Tile IR 的第三个前端。</p>
+<h3 id="2026-dsl-2026-11-14">第三步：2026 年的 DSL 地图（2026-11-14）</h3>
+<p>04 调研 §3.2 的整理，按抽象层级从低到高：</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>工具</th>
+<th>你要管什么</th>
+<th>编译器管什么</th>
+<th>典型用户</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>线程</td>
+<td>CUDA C++ / PTX</td>
+<td>一切</td>
+<td>寄存器分配、指令调度</td>
+<td>学原理、榨最后 10%</td>
+</tr>
+<tr>
+<td>tile + 线程</td>
+<td><strong>CuTe DSL</strong>（Python）</td>
+<td>layout、TMA / MMA atom、流水线、warp 分工</td>
+<td>编译、部分调度</td>
+<td>FA4、Quack</td>
+</tr>
+<tr>
+<td>tile + 线程</td>
+<td><strong>ThunderKittens</strong>（C++）</td>
+<td>16 × 16 寄存器 tile 原语、warp 分工</td>
+<td>—</td>
+<td>HazyResearch 的 kernel</td>
+</tr>
+<tr>
+<td>tile（可下到线程）</td>
+<td><strong>TileLang</strong>（Python，TVM 后端）</td>
+<td>tile 划分、流水线级数、可选的线程级细节</td>
+<td>布局、指令选择</td>
+<td>DeepSeek TileKernels</td>
+</tr>
+<tr>
+<td>tile</td>
+<td><strong>cuTile</strong>（Python / C++ / Rust）</td>
+<td>tile 形状、block 负责哪块</td>
+<td>线程映射、shared、异步、Tensor Core</td>
+<td>官方路线</td>
+</tr>
+<tr>
+<td>block</td>
+<td><strong>Triton</strong>（Python）</td>
+<td>block 划分、<code>tl.load</code> / <code>tl.dot</code></td>
+<td>线程映射、shared、流水线、Tensor Core</td>
+<td>Liger、Unsloth、PyTorch Inductor</td>
+</tr>
+<tr>
+<td>更高</td>
+<td><strong>Helion</strong>（Python，编译到 Triton）</td>
+<td>PyTorch 风格的写法</td>
+<td>tile 大小等大量参数自动搜索</td>
+<td>快速写融合算子</td>
+</tr>
+</tbody>
+</table>
+<p>几点观察：</p>
+<ul>
+<li><strong>Triton 是生态最大的</strong>：PyTorch 的 <code>torch.compile</code> 默认生成 Triton；CS336 a2 用 Triton 写 FlashAttention（study-plan 阶段 9）。</li>
+<li><strong>越往上写得越快、可移植性越好，但能控制的越少</strong>。FA4 选 CuTe DSL 而不是 Triton，就是因为要精确控制 TMEM、2-CTA、warp 分工（第 20、22 章）。</li>
+<li>作者自报的性能对比要谨慎看：Helion 团队报告平均比 torch.compile 快 1.21 倍、比手写 Triton 快 1.85 倍，但 Red Hat 的跨厂商基准里它在某张消费卡上异常慢（04 调研 §3.2）。</li>
+</ul>
+<h3 id="2026-11-14_1">第四步：怎么选（2026-11-14）</h3>
+<p>04 调研 的选型口诀：<strong>先 Triton 写对，性能不够上 CuTe DSL / TileLang，要懂原理写 C++。</strong> 展开一点：</p>
+<ol>
+<li>逐元素 / 归约 / norm 等融合算子，没有特殊硬件需求 → <strong>Triton</strong>（或 Helion、torch.compile 自动生成）；</li>
+<li>想跨 NVIDIA 架构可移植、又要用 Tensor Core 的稠密计算 → <strong>cuTile</strong>；</li>
+<li>要支持国产卡或多后端 → <strong>TileLang</strong>；</li>
+<li>要在 Hopper / Blackwell 上做到接近峰值、需要控制 TMA / TMEM / warp 专业化 → <strong>CuTe DSL</strong> 或 CUTLASS C++；</li>
+<li>学习、调试、读别人的 kernel → <strong>CUDA C++ / PTX</strong>（这本书的前 22 章）。</li>
+</ol>
+<p><strong>为什么还要学 SIMT？</strong> 因为 DSL 生成的 kernel 慢了、错了，你得能读懂 Nsight 报告和 PTX / SASS，知道是合并访存、bank conflict、occupancy 还是流水线出了问题——这些概念在哪一层 DSL 里都一样。</p>
+<h3 id="simt-vs-tile">动画演示：SIMT 视角 vs Tile 视角</h3>
+<p><img alt="SIMT vs Tile" src="../animations/24-simt-vs-tile.gif" /></p>
+<p>可交互版：<a href="../animations/24-simt-vs-tile.html">animations/24-simt-vs-tile.html</a>。开关：<strong>SIMT / Tile</strong>。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>同一个 16 × 16 的矩阵加法，切成 4 个 8 × 8 的 tile，分给 4 个 block；</li>
+<li>SIMT 模式：放大一个 block，里面 64 个线程各自算下标、各取一个元素，旁边列出程序员要写的东西（下标、越界检查、同步）；</li>
+<li>Tile 模式：block 整块 load、整块相加、整块 store，旁边列出的变成"编译器替你做"；</li>
+<li>最后一帧并排对比两边的代码行数。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：PG 说 tile 的每一维必须是 2 的幂、编译期已知。如果你的数据长度是 1000、tile 大小取 256，需要几个 block？最后一个 tile 超出数组的部分谁来处理？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：用自己的话说，Tile 模型里为什么"没有 warp 分岔"这个概念？这对写代码的人意味着什么？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：下面三个任务你分别选哪个工具，为什么？(a) 给训练加一个"残差加 + RMSNorm + 量化成 FP8"的融合算子；(b) 在 B200 上写一个新的 attention 变体，目标是接近 FA4 的性能；(c) 同一个 GEMM 要同时在 A100、H100、B200 上跑得不错。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>SIMT 替每个线程想，Tile 替每个 block 想；<br />
+tile 不可变、2 的幂、编译期定，越界编译器管；<br />
+没有 threadIdx、没有 shared、没有同步，线程数编译器定；<br />
+从低到高：C++ / PTX → CuTe DSL / ThunderKittens → TileLang / cuTile → Triton → Helion；<br />
+先 Triton 写对，不够快再往下走；概念到哪一层都一样。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C56（Tile 模型：按 block 写、tile 不可变且维度为 2 的幂、编译器负责线程映射 / shared / 异步 / Tensor Core；无 warp 分岔）</li>
+<li>C57（DSL 分层与选型：Triton / Helion / cuTile / TileLang / CuTe DSL / C++ 各管多少）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §1.2.2.3</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 1172–1269 行</td>
+<td>Tile 模型的概念、与 SIMT 的关系</td>
+</tr>
+<tr>
+<td>★ PG §2.4</td>
+<td>第 4558–6308 行</td>
+<td>cuTile C++ / Python 的全部写法：启动、建 tile、读写、控制流、矩阵乘、归约、原子、提示</td>
+</tr>
+<tr>
+<td>★ Triton 官方教程</td>
+<td>在线 triton-lang.org（〔旧知〕）</td>
+<td>向量加 → softmax → matmul → FlashAttention 一条线</td>
+</tr>
+<tr>
+<td><code>docs/blog-cuda-tile-cpp.txt</code></td>
+<td>本地</td>
+<td>CUDA Tile C++ 发布博客</td>
+</tr>
+<tr>
+<td>cutile-rs tutorial 01–06</td>
+<td><code>code/nvidia-cuda-rust/repo/</code></td>
+<td>Rust 版 Tile（M9 里程碑）</td>
+</tr>
+<tr>
+<td>Accelerated Computing Hub「CUDA Tile Tutorial」、「CuPy, SIMT, &amp; Tile」</td>
+<td>在线</td>
+<td>官方练习（04 调研 §1.3）</td>
+</tr>
+<tr>
+<td>TileLang 论文 arXiv 2504.17577、Helion 博客、TLX 论文 arXiv 2605.10905</td>
+<td>在线</td>
+<td>各 DSL 的设计取舍</td>
+</tr>
+<tr>
+<td>Triton-Puzzles</td>
+<td>在线（Mac 可做）</td>
+<td>CS336 a2 之前的练习</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>tile space</strong>：形状 <span class="arithmatex">\((M, N)\)</span> 的数组按 <span class="arithmatex">\((t_m, t_n)\)</span> 切，tile 坐标 <span class="arithmatex">\((i, j)\)</span> 覆盖元素 <span class="arithmatex">\([it_m, (i+1)t_m) \times [jt_n, (j+1)t_n)\)</span>；tile 数 <span class="arithmatex">\(\lceil M/t_m \rceil \times \lceil N/t_n \rceil\)</span>（PG §1.2.2.3.2）。</li>
+<li>这和第 19 章 CuTe 的 <code>zipped_divide</code> 是同一个概念：Tile 模型把它做成了语言内置。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cuTile Python kernel</td>
+<td><code>@ct.kernel def k(a, TILE: ct.Constant[int]): t = ct.load(a, index=(ct.bid(0),), shape=(TILE,))</code></td>
+</tr>
+<tr>
+<td>cuTile C++ kernel</td>
+<td><code>__tile_global__ void k(float* a, ...)</code></td>
+</tr>
+<tr>
+<td>Triton kernel</td>
+<td><code>@triton.jit def k(a_ptr, ..., BLOCK: tl.constexpr): offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK); x = tl.load(a_ptr + offs, mask=offs &lt; n)</code></td>
+</tr>
+<tr>
+<td>Triton 矩阵乘</td>
+<td><code>acc += tl.dot(a_tile, b_tile)</code></td>
+</tr>
+<tr>
+<td>安装</td>
+<td><code>pip install cuda-tile</code>（cuTile）、<code>pip install triton</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch24_tile_model.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch24_tile_model.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（cuTile / Triton 真跑要 NVIDIA GPU [GPU]；这里用 NumPy 模拟 <code>ct.load</code> / <code>ct.store</code> 的 tile space 越界处理）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch24_tile_model.py   # 一步一步打印  
+uv run pytest tests/test_ch24_27.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二步 SIMT 写法</td>
+<td>每个线程 <code>if (i &lt; n)</code></td>
+<td><code>simt_vec_add(a, b, 8)</code></td>
+<td>= a + b</td>
+</tr>
+<tr>
+<td>第二步 Tile 写法</td>
+<td>每个 block 一整块</td>
+<td><code>tile_vec_add(a, b, 8)</code></td>
+<td>= a + b，代码里没有 threadIdx 和 if</td>
+</tr>
+<tr>
+<td>第一步 越界由 tile space 处理</td>
+<td>load 补 0、store 截掉</td>
+<td><code>tile_load(a, 2, 8)</code></td>
+<td>[16, 17, 18, 19, 0, 0, 0, 0]</td>
+</tr>
+<tr>
+<td>第一步 2 的幂</td>
+<td>编译期已知</td>
+<td><code>is_valid_tile(s)</code></td>
+<td>8、16、128 可以，24 不行</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">for bid in range(-(-len(a) // tile)):     # ct.bid(0)：这个 block 负责第几块
+    ta = tile_load(a, bid, tile)           # ct.load：越界部分补 0
+    tb = tile_load(b, bid, tile)
+    tile_store(c, bid, ta + tb)            # ct.store：只写回数组里存在的部分
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>-(-n // tile)</code> 是向上取整的另一种写法</strong>：Python 的 <code>//</code> 向下取整，对负数取两次负号就变成向上取整；和第 1 章的 <code>(n + B - 1) // B</code> 结果一样。</li>
+<li><strong><code>ta + tb</code> 产生新数组</strong>：对应讲义说的"tile 是不可变的值，每次运算产生新 tile"。</li>
+<li><strong>Tile 写法里的"block 里几个线程"根本没出现</strong>：这正是 Tile 模型的意思——由编译器决定。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>tile_vec_add</code> 的 tile 换成 4、16、32，确认结果不变。</li>
+<li>试试 <code>tile_vec_add(a, b, 24)</code>，看 2 的幂检查怎么报错。</li>
+</ul><nav class="pager"><a href="23-inference-kernels.html">← 第 23 章 · 推理 kernel：decode 为什么是 memory-bound，以及 paged KV、split-KV、MLA、megakernel</a><a href="25-compile-deploy.html">第 25 章 · 编译与部署：PTX、cubin、fatbin、JIT，以及 Rust host + C++ kernel →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

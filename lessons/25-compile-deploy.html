@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 25 章 · 编译与部署：PTX、cubin、fatbin、JIT，以及 Rust host + C++ kernel · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="25-ptxcubinfatbinjit-rust-host-c-kernel">第 25 章 · 编译与部署：PTX、cubin、fatbin、JIT，以及 Rust host + C++ kernel</h1><p><a class="btn" href="../animations/25-compile-pipeline.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：<code>nvcc</code> 把一个 <code>.cu</code> 文件变成了什么？PTX 和 SASS 有什么区别？为什么一份程序能在好几代 GPU 上跑、有时又跑不了？运行时编译（NVRTC）有什么用？生产里 Rust 程序怎么调 C++ 写的 kernel？自己写的 kernel 怎么发布给别人用？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/24-tile-dsl.html">第 24 章 Tile 与 DSL</a> · 下一章：<a href="../lessons/26-streams-graphs-pdl.html">第 26 章 延迟优化</a><br />
+对应原文：PG §1.3.3 PTX、§1.3.4 Cubins and Fatbins（含 Binary / PTX Compatibility、JIT，<code>materials/text/cuda-programming-guide.txt</code> 第 1428–1545 行）、§2.7 NVCC（第 7592 行起，PTX 与 cubin 生成在 §2.7.3.1 第 7707 行）；03 Rust vs C++ §5 选型决策；01 Rust 生态；04 调研 §3.4（Hugging Face Kernels Hub）</p>
+<p>本章缩写：PTX = Parallel Thread Execution（并行 / 线程 / 执行，NVIDIA 的虚拟指令集）· ISA = Instruction Set Architecture（指令集架构）· SASS = Streaming ASSembler（真实机器码）· cubin = CUDA binary（某一代 GPU 的二进制）· fatbin = fat binary（"胖"二进制，装多份 cubin / PTX）· JIT = Just-In-Time（即时编译）· NVRTC = NVIDIA Runtime Compilation（运行时编译库）· sm_XX / compute_XX（真实架构 / 虚拟架构版本号）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="ptx-sass2026-11-14">第一步：两层指令集——PTX 与 SASS（2026-11-14）</h3>
+<p>PG §1.3.3：<strong>PTX 是一个虚拟指令集</strong>，"a high-level assembly language for NVIDIA GPUs"，在真实硬件指令之上提供一层抽象。</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>PTX</th>
+<th>SASS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>是什么</td>
+<td>虚拟汇编，跨代相对稳定</td>
+<td>某一代 GPU 真正执行的机器码</td>
+</tr>
+<tr>
+<td>版本</td>
+<td><code>compute_80</code>、<code>compute_90a</code>……</td>
+<td><code>sm_80</code>、<code>sm_90a</code>、<code>sm_100a</code>……</td>
+</tr>
+<tr>
+<td>谁生成</td>
+<td>nvcc、Triton、Rust 编译器等前端</td>
+<td><code>ptxas</code> 把 PTX 编成 SASS；驱动 JIT 也能编</td>
+</tr>
+<tr>
+<td>看它为了什么</td>
+<td>看写了什么指令（<code>mma</code>、<code>cp.async.bulk.tensor</code>）</td>
+<td>看真正生成了什么（<code>HMMA</code>、<code>LDG.E.128</code>、有没有 spill）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>类比：</strong> PTX 像菜谱，SASS 像某个厨房按自己的灶具改写后的操作卡。同一份菜谱，不同厨房（不同代 GPU）各自改写。</p>
+<p>PG 还点出了一个重要意义：别的语言和 DSL 只要能生成 PTX，就能跑在 NVIDIA GPU 上——Triton、cuda-oxide（Rust）、Julia 都是这么做的。</p>
+<h3 id="nvcc-2026-11-14">第二步：nvcc 做了什么（2026-11-14）</h3>
+<pre><code>my.cu ──nvcc──┬── host 代码 ──→ 普通 C++ 编译器 ──→ CPU 机器码
+              └── device 代码 ──→ PTX ──ptxas──→ cubin（SASS）
+                                         └────────┬───────┘
+                                              fatbin（可装多份）
+                                  两者链接进同一个可执行文件 / .so
+</code></pre>
+<p>PG §1.3.4：可执行文件里的 GPU 代码放在 <strong>fatbin</strong> 容器里，fatbin 可以同时装<strong>多个架构的 cubin 和 PTX</strong>；运行时，驱动从里面挑最适合当前 GPU 的那份。</p>
+<pre><code class="language-bash"># 同时生成 sm_80、sm_90a 的 cubin，再附一份 compute_90 的 PTX 留给未来
+nvcc -gencode arch=compute_80,code=sm_80 \
+     -gencode arch=compute_90a,code=sm_90a \
+     -gencode arch=compute_90,code=compute_90 my.cu
+</code></pre>
+<p>看中间产物：<code>nvcc -ptx my.cu</code>（得到 PTX）、<code>cuobjdump -sass a.out</code>（看 SASS）；不装工具链时用 Godbolt 的在线 nvcc（04 调研 §1.6，Mac 上唯一的办法）。</p>
+<h3 id="2026-11-14">第三步：兼容性规则（2026-11-14）</h3>
+<p>PG §1.3.4.1–1.3.4.3 的规则，记三条：</p>
+<ol>
+<li><strong>cubin 只能往同一大版本的更高小版本兼容</strong>：为 8.6 编的 cubin 能在 8.6、8.9 上跑，<strong>不能在 8.0 上跑</strong>（小版本更低），<strong>也不能在 9.0 上跑</strong>（大版本不同）；</li>
+<li><strong>PTX 能向前兼容</strong>：带了 <code>compute_80</code> 的 PTX，在任何 CC ≥ 8.0 的 GPU 上都能被驱动 <strong>JIT 编译</strong>——包括编译时还不存在的新卡。代价是首次加载要编译（结果缓存在 compute cache 里，驱动升级后自动失效重编）；</li>
+<li><strong>带 <code>a</code> 后缀的架构（<code>sm_90a</code>、<code>sm_100a</code>）不向前兼容</strong>：wgmma、setmaxnreg（第 18 章）、tcgen05（第 20 章）这些架构专属指令只在对应的 <code>a</code> 目标上可用，编出来的东西换一代就不能跑（〔旧知〕，与第 20 章"Blackwell 不认 wgmma"一致）。</li>
+</ol>
+<p><strong>实际后果</strong>：PyTorch、vLLM 这类库发布时要为一串 <code>sm_XX</code> 各编一份 cubin，再附一份最新 PTX；用了 Hopper / Blackwell 专属指令的 kernel 要按架构分别编译、运行时分别分派。</p>
+<h3 id="nvrtc2026-11-14">第四步：运行时编译——NVRTC（2026-11-14）</h3>
+<p>PG §1.3.4.3 最后一段：除了离线用 nvcc，还可以用 <strong>NVRTC 在程序运行时把 CUDA C++ 源码字符串编译成 PTX</strong>，再用 driver API 加载、启动。</p>
+<p>什么时候需要：</p>
+<ul>
+<li>kernel 的参数（tile 大小、数据类型）运行时才知道，想<strong>为每种组合生成专门的代码</strong>——DeepGEMM 就是运行时 JIT 编译 GEMM kernel 的（04 调研 §3.3）；</li>
+<li>宿主程序不是 C++（Python、Rust），又不想依赖 nvcc 构建流程——<strong>CuPy 的 <code>RawKernel</code>、cudarc 的 NVRTC 支持</strong>都是这条路；</li>
+<li>Triton 也是运行时 JIT：第一次调用时把 Python 写的 kernel 编成 PTX → cubin，缓存起来。</li>
+</ul>
+<h3 id="rust-host-c-kernel2026-11-14">第五步：Rust host + C++ kernel（2026-11-14）</h3>
+<p>03 Rust vs C++ §5 的选型结论：<strong>生产默认是"CUDA C++ kernel + cudarc（Rust host）"</strong>。原因：C++ 有 CUTLASS / CuTe 和完整工具链；Rust 在 host 端负责内存安全、并发和服务逻辑。</p>
+<p>两种组合方式：</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>做法</th>
+<th>优缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>预编译</td>
+<td>构建时用 nvcc 把 <code>.cu</code> 编成 PTX / cubin，Rust 用 cudarc 加载 <code>.ptx</code> 文件或嵌进二进制的字节</td>
+<td>启动快；构建要装 CUDA 工具链</td>
+</tr>
+<tr>
+<td>运行时编译</td>
+<td>Rust 读 <code>.cu</code> 源码字符串，cudarc 调 NVRTC 编译后加载</td>
+<td>构建简单、可按参数特化；首次启动慢</td>
+</tr>
+</tbody>
+</table>
+<p>study-plan 的 <strong>M10</strong> 就是这个模板：cudarc 加载 M3 写的 <code>.cu</code>，NVRTC 编译 + launch + 对拍 CPU。candle 的 <code>candle-kernels/</code> 是现成的范例（预编译 PTX 嵌进 Rust crate）。</p>
+<p>Rust 也能直接写 kernel（cuda-oxide、cutile-rs、CubeCL，01 Rust 生态），但截至 2026-10 的核对：H100 的 wgmma 支持不全、用不了 C++ 模板库（03 §3）。</p>
+<h3 id="kernelhugging-face-kernels-hub2026-11-14">第六步：发布 kernel——Hugging Face Kernels Hub（2026-11-14）</h3>
+<p>自己写的 kernel 怎么给别人用？04 调研 §3.4：Hugging Face 的 <strong><code>kernels</code></strong> 库——</p>
+<ul>
+<li>使用方：<code>get_kernel("kernels-community/activation")</code>，从 Hub 下载为当前 PyTorch × CUDA 组合预编译好的 kernel，直接调用；</li>
+<li>发布方：用 Nix 的 <code>kernel-builder</code> 为所有支持的 PyTorch / CUDA 版本组合各编一份（正是第三步说的"一串 sm_XX 都要编"），<code>build-and-upload</code> 上传，有现成的 GitHub Action。</li>
+</ul>
+<p>这解决了 CUDA kernel 分发最头疼的问题：<strong>用户的 PyTorch 版本、CUDA 版本、GPU 架构五花八门</strong>。</p>
+<h3 id="cu-gpu">动画演示：从 .cu 到在 GPU 上运行</h3>
+<p><img alt="编译流程" src="../animations/25-compile-pipeline.gif" /></p>
+<p>可交互版：<a href="../animations/25-compile-pipeline.html">animations/25-compile-pipeline.html</a>。开关：<strong>目标 GPU</strong>（A100 sm_80 / H100 sm_90 / 未来的新卡）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>左边 <code>.cu</code> 文件分成 host / device 两路；device 一路依次变成 PTX、cubin，装进 fatbin；</li>
+<li>fatbin 里有 sm_80、sm_90a 两份 cubin 和一份 compute_90 PTX；</li>
+<li>选不同的目标 GPU，看驱动挑中哪一份：A100 → sm_80 cubin；H100 → sm_90a cubin；未来新卡 → PTX 现场 JIT（画出编译、写入缓存）；</li>
+<li>最后一帧：同一张 fatbin 在三张卡上都能跑，但只有 H100 用到了 wgmma 版本。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：一个程序只带了 <code>sm_86</code> 的 cubin（没有 PTX）。它能在 A100（8.0）、RTX 4090（8.9）、H100（9.0）上跑吗？分别说明原因。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：为什么用了 wgmma 的 kernel 必须编译成 <code>sm_90a</code>，而且不能指望在 Blackwell 上 JIT 运行？发布这样的库时你会怎么组织编译目标？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：Rust 推理服务调 C++ kernel，"构建时 nvcc 预编译"和"运行时 NVRTC 编译"各适合什么场景？DeepGEMM 为什么选运行时编译？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>PTX 是菜谱、SASS 是操作卡，ptxas 和驱动负责改写；<br />
+nvcc 一分为二：host 给 C++ 编译器，device 变 PTX 再变 cubin，装进 fatbin；<br />
+cubin 只认同代更高小版本，PTX 能给未来的卡现场编；带 a 的专属指令不往后兼容；<br />
+运行时编译：参数现场定、宿主不是 C++ 时用；<br />
+生产默认 C++ kernel + Rust host；发 kernel 交给 Kernels Hub 按版本组合编。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C58（PTX vs SASS；fatbin 装多份 cubin + PTX；cubin / PTX 兼容规则；<code>a</code> 后缀不向前兼容）</li>
+<li>C59（NVRTC 的用途；Rust host + C++ kernel 的两种组合方式）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §1.3.3–1.3.4</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 1428–1545 行</td>
+<td>PTX、cubin、fatbin、兼容性、JIT 的原文</td>
+</tr>
+<tr>
+<td>★ 03 Rust vs C++</td>
+<td>本专题笔记 §3、§5</td>
+<td>Rust 做不到的事与选型树</td>
+</tr>
+<tr>
+<td>PG §2.7 NVCC</td>
+<td><code>text/cuda-programming-guide.txt</code> §2.7（PTX 与 cubin 生成第 7707 行起）</td>
+<td><code>-gencode</code>、<code>-arch</code>、LTO、调试与 profiling 选项</td>
+</tr>
+<tr>
+<td>NVRTC User Guide</td>
+<td>在线（〔旧知〕）</td>
+<td>运行时编译 API</td>
+</tr>
+<tr>
+<td>cudarc <code>examples/</code>、candle <code>candle-kernels/</code></td>
+<td><code>code/cudarc/</code>、<code>code/candle/</code></td>
+<td>Rust host 加载 PTX / NVRTC 的实例（M10）</td>
+</tr>
+<tr>
+<td>Hugging Face「From Zero to GPU」博客与 kernels 文档</td>
+<td>在线</td>
+<td>kernel-builder 的完整流程</td>
+</tr>
+<tr>
+<td>PTX ISA 9.4 第 1 章</td>
+<td><code>text/ptx-isa-9.4.txt</code> 开头</td>
+<td>PTX 的设计目标与版本规则</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>cubin 可加载条件</strong>：cubin 目标 <code>sm_XY</code>，GPU 为 <code>X'.Y'</code>，可加载当且仅当 <span class="arithmatex">\(X' = X\)</span> 且 <span class="arithmatex">\(Y' \ge Y\)</span>（PG §1.3.4.1）。</li>
+<li><strong>PTX 可 JIT 条件</strong>：PTX 目标 <code>compute_XY</code>，GPU 计算能力 <span class="arithmatex">\(\ge X.Y\)</span>（非 <code>a</code> 目标）。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>命令 / 代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>只出 PTX</td>
+<td><code>nvcc -ptx -arch=compute_90 my.cu</code></td>
+</tr>
+<tr>
+<td>多架构 fatbin</td>
+<td><code>nvcc -gencode arch=compute_80,code=sm_80 -gencode arch=compute_90a,code=sm_90a ...</code></td>
+</tr>
+<tr>
+<td>看 SASS</td>
+<td><code>cuobjdump -sass a.out</code> / <code>nvdisasm my.cubin</code></td>
+</tr>
+<tr>
+<td>看寄存器 / spill</td>
+<td><code>nvcc -Xptxas -v</code></td>
+</tr>
+<tr>
+<td>NVRTC</td>
+<td><code>nvrtcCreateProgram</code> → <code>nvrtcCompileProgram</code> → <code>nvrtcGetPTX</code> → <code>cuModuleLoadData</code> → <code>cuLaunchKernel</code></td>
+</tr>
+<tr>
+<td>Python 运行时编译</td>
+<td><code>cupy.RawKernel(src, "name")</code></td>
+</tr>
+<tr>
+<td>Kernels Hub</td>
+<td><code>from kernels import get_kernel; act = get_kernel("kernels-community/activation")</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch25_compile_deploy.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch25_compile_deploy.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真正编译要 nvcc / ptxas（CUDA 工具链）；Mac 上可以用 Godbolt 的在线 nvcc 看 PTX / SASS）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch25_compile_deploy.py   # 一步一步打印  
+uv run pytest tests/test_ch24_27.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第三步 规则 1</td>
+<td>cubin：同一大版本、小版本不低于它</td>
+<td><code>can_run("sm_80", cc)</code></td>
+<td>8.0、8.6、8.9 可以，9.0 不行</td>
+</tr>
+<tr>
+<td>第三步 规则 2</td>
+<td>PTX 向前兼容</td>
+<td><code>can_run("compute_80", cc)</code></td>
+<td>7.5 不行；8.0、9.0、10.0 都 JIT</td>
+</tr>
+<tr>
+<td>第三步 规则 3</td>
+<td>带 a 的只认自己</td>
+<td><code>can_run("sm_90a", cc)</code></td>
+<td>9.0 可以，10.0 不行</td>
+</tr>
+<tr>
+<td>第二步 fatbin</td>
+<td>驱动挑最合适的一份</td>
+<td><code>pick_from_fatbin(["sm_80", "sm_90a", "compute_90"], cc)</code></td>
+<td>8.6 → sm_80；9.0 → sm_90a；10.0 → compute_90 JIT；7.5 → 跑不了</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">kind, major, minor, a = parse(target)       # &quot;sm_90a&quot; → (&quot;sm&quot;, 9, 0, True)
+if a:                                        # 架构专属：只认同一个架构
+    return ... if (major, minor) == cc else None
+if kind == &quot;sm&quot;:                             # cubin：同一大版本、小版本不低于它
+    return &quot;cubin&quot; if cc[0] == major and cc[1] &gt;= minor else None
+return &quot;JIT&quot; if cc &gt;= (major, minor) else None   # PTX：任何更新的卡都能 JIT
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>Python 的元组比较是逐项比</strong>：<code>(10, 0) &gt;= (8, 0)</code> 为 True，正好就是"CC 不低于"的意思。</li>
+<li><strong>fatbin 里 cubin 优先于 PTX</strong>：能直接跑的机器码不用现场编译；都不能直接跑时才 JIT（首次加载慢，结果会缓存）。</li>
+<li><strong>讲义那条 nvcc 命令只给 <code>sm_90a</code> 编了 cubin、没带 <code>compute_90a</code> 的 PTX</strong>：所以 10.0 的卡用的是普通 <code>compute_90</code> 那份 PTX——里面不能有 wgmma 这类 9.0a 专属指令。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>往 fatbin 里加一份 <code>sm_100a</code>，看 10.0 的卡改挑哪一份。</li>
+<li>把 fatbin 换成只有一份 <code>compute_80</code> PTX，看 8.0、9.0、10.0 的卡各挑什么、哪些要 JIT。</li>
+</ul><nav class="pager"><a href="24-tile-dsl.html">← 第 24 章 · Tile 模型与 kernel DSL：cuTile、Triton、CuTe DSL、TileLang、Helion</a><a href="26-streams-graphs-pdl.html">第 26 章 · 延迟优化：streams、CUDA Graphs 与 PDL →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

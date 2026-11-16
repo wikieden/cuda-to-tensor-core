@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 9 章 · 性能分析：roofline、正确计时与 Nsight · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="9-roofline-nsight">第 9 章 · 性能分析：roofline、正确计时与 Nsight</h1><p><a class="btn" href="../animations/09-roofline.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：一个 kernel 是慢在"算"还是慢在"搬"？怎么用一条公式判断它最快能跑多快？怎么正确地测 kernel 时间？Nsight Systems 和 Nsight Compute 各看什么？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/08-occupancy.html">第 8 章 occupancy</a> · 下一章：<a href="../lessons/10-reduction.html">第 10 章 归约</a><br />
+对应原文：Best Practices §9.1 Timing、§9.2 Bandwidth（<code>materials/text/cuda-c-best-practices-guide.txt</code> 第 900–1084 行）；PG §2.5.3.3 Timing Operations in CUDA Streams（<code>text/cuda-programming-guide.txt</code> 第 6483–6531 行）；Boehm SGEMM 开头的上限估算（<code>text/blog-boehm-cuda-matmul-worklog.txt</code> 第 125–135 行）；GPU MODE L8（<code>text/gpu-mode-lecture-08-cuda-performance-checklist.txt</code>）；Nsight Compute guide（<code>docs/nsight-compute-profiling-guide-v2026.3.1.txt</code>）；04 调研 §4</p>
+<p>本章缩写：FLOP = FLoating-point OPeration（浮点运算，一次乘或加）· FLOP/s = 每秒浮点运算数 · TFLOP/s = 10¹² FLOP/s · AI = Arithmetic Intensity（算术强度，本章专指 FLOP ÷ 字节；不是人工智能）· SOL = Speed Of Light（光速，指硬件理论上限）· FMA = Fused Multiply-Add（融合乘加：a × b + c 一条指令，算 2 个 FLOP）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-14">第一步：三种"慢"（2026-11-14）</h3>
+<p>Horace He 的三分法（〔旧知〕，04 调研 §2.3）：kernel 的时间花在三件事上——</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>意思</th>
+<th>典型例子</th>
+<th>提速办法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>compute-bound</strong></td>
+<td>计算单元一直满，数据来得够快</td>
+<td>大矩阵乘法、prefill 阶段的 attention</td>
+<td>用 Tensor Core、低精度、减少多余运算</td>
+</tr>
+<tr>
+<td><strong>memory-bound</strong></td>
+<td>计算单元在等数据</td>
+<td>逐元素运算、归约、LayerNorm、decode 阶段的 attention</td>
+<td>少搬数据：融合、合并访存、低精度存储</td>
+</tr>
+<tr>
+<td><strong>overhead-bound</strong></td>
+<td>GPU 本身闲着，时间花在启动、Python、同步上</td>
+<td>很多个几微秒的小 kernel</td>
+<td>CUDA Graphs、融合、减少同步（第 26 章）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>先判断是哪一种，再选手段。</strong> 给 memory-bound 的 kernel 换 Tensor Core，一点用都没有。</p>
+<h3 id="roofline2026-11-14">第二步：roofline——一条公式算上限（2026-11-14）</h3>
+<p><strong>算术强度</strong> = 这个 kernel 做的浮点运算数 ÷ 它从显存读写的字节数（FLOP / byte）。</p>
+<p>kernel 的最快速度受两个天花板限制：</p>
+<div class="arithmatex">\[\text{可达性能} = \min\left(\text{峰值算力},\ \text{算术强度} \times \text{显存带宽}\right)\]</div>
+<p>两条线交点处的算术强度叫<strong>脊点（ridge point）</strong>：</p>
+<div class="arithmatex">\[\text{脊点} = \frac{\text{峰值算力}}{\text{显存带宽}}\]</div>
+<ul>
+<li>算术强度 &lt; 脊点 → memory-bound，性能 = 强度 × 带宽；</li>
+<li>算术强度 &gt; 脊点 → compute-bound，性能 = 峰值算力。</li>
+</ul>
+<p><strong>数字演示（H100 SXM，BF16 稠密 Tensor Core 约 989 TFLOP/s，HBM3 约 3.35 TB/s，规格书数字〔旧知〕）</strong>：</p>
+<div class="arithmatex">\[\text{脊点} = \frac{989 \times 10^{12}}{3.35 \times 10^{12}} \approx 295 \text{ FLOP/byte}\]</div>
+<table>
+<thead>
+<tr>
+<th>kernel</th>
+<th>FLOP</th>
+<th>字节</th>
+<th>算术强度</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>向量加法 FP32，n 个元素</td>
+<td>n</td>
+<td>12n（读 2 个、写 1 个，各 4 字节）</td>
+<td>0.083</td>
+<td>极度 memory-bound</td>
+</tr>
+<tr>
+<td>ReLU BF16</td>
+<td>n</td>
+<td>4n</td>
+<td>0.25</td>
+<td>memory-bound</td>
+</tr>
+<tr>
+<td>矩阵乘 FP32，N = 4096</td>
+<td><span class="arithmatex">\(2N^3\)</span></td>
+<td>最少 <span class="arithmatex">\(3 \cdot 4N^2\)</span></td>
+<td><span class="arithmatex">\(N/6 \approx 683\)</span></td>
+<td>compute-bound</td>
+</tr>
+<tr>
+<td>矩阵乘 BF16，N = 4096</td>
+<td><span class="arithmatex">\(2N^3\)</span></td>
+<td>最少 <span class="arithmatex">\(3 \cdot 2N^2\)</span></td>
+<td><span class="arithmatex">\(N/3 \approx 1365\)</span></td>
+<td>compute-bound</td>
+</tr>
+</tbody>
+</table>
+<p>向量加法的上限：0.083 × 3.35 TB/s ≈ 0.28 TFLOP/s——不到峰值的 0.03%。<strong>这不是 kernel 写得差，是这个运算本身就只能这么快</strong>；评价它要看<strong>带宽利用率</strong>（达到 3.35 TB/s 的百分之几），而不是 FLOP/s。</p>
+<p>Boehm 的 SGEMM 博客一开头就做了这笔账（第 129–132 行）：A6000 FP32 30 TFLOP/s、768 GB/s；4092² 的矩阵乘理论上算要 4.5 ms、搬最少的数据只要 0.34 ms——所以写对了一定是 compute-bound。</p>
+<h3 id="2026-11-14_1">第三步：正确计时（2026-11-14）</h3>
+<p>Best Practices §9.1 和 04 调研 §4.2 合起来的清单：</p>
+<ol>
+<li><strong>用 CUDA event 计时</strong>（GPU 时钟，分辨率约 0.5 微秒）：</li>
+</ol>
+<p><code>cpp
+   cudaEventRecord(start);
+   kernel&lt;&lt;&lt;g, b&gt;&gt;&gt;(...);
+   cudaEventRecord(stop);
+   cudaEventSynchronize(stop);
+   cudaEventElapsedTime(&amp;ms, start, stop);</code></p>
+<p>用 CPU 计时器就必须在开始和结束<strong>前</strong>都 <code>cudaDeviceSynchronize()</code>（第 4 章题 2）。
+2. <strong>先预热</strong>：第一次调用含加载、JIT 编译等一次性开销，不算。
+3. <strong>重复多次取中位数</strong>：单次波动大。
+4. <strong>小输入要清 L2</strong>：输入只有几 MB 时，第二次跑全在 L2 里（H100 有 50 MB），测出来的"显存带宽"比真实显存还快。每次之间写一块比 L2 大的缓冲区冲掉它。
+5. <strong>知道频率会变</strong>：GPU 会因功耗、温度降频（Gordić 第 81–96 行）。Nsight Compute 默认锁定基础频率，所以它测的时间和实际跑的时间可能对不上。
+6. <strong>报告有效带宽或 TFLOP/s，并和峰值比</strong>：</p>
+<p>$<span class="arithmatex">\(\text{有效带宽} = \frac{\text{读字节} + \text{写字节}}{\text{耗时}}\)</span>$</p>
+<p>（Best Practices §9.2.2）。</p>
+<h3 id="nsight-2026-11-14">第四步：Nsight 两件套（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>看什么</th>
+<th>什么时候用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Nsight Systems</strong>（<code>nsys profile ./app</code>）</td>
+<td>整个程序的时间线：CPU 线程、每个 kernel、每次拷贝、kernel 之间的空隙</td>
+<td><strong>先用它</strong>：找出哪个 kernel 最耗时、GPU 有没有在闲着等 CPU</td>
+</tr>
+<tr>
+<td><strong>Nsight Compute</strong>（<code>ncu --set full ./app</code>）</td>
+<td>单个 kernel 的深度报告</td>
+<td>锁定了慢 kernel 之后</td>
+</tr>
+</tbody>
+</table>
+<p>Nsight Compute 报告先看这几块（04 调研 §4.1）：</p>
+<ol>
+<li><strong>GPU Speed Of Light Throughput</strong>：Memory % 和 Compute (SM) % 两个数。哪个接近 100% 就是被它卡住；两个都低，多半是延迟没藏住（occupancy 低、依赖链长）或 overhead。</li>
+<li><strong>Roofline 图</strong>：直接把 kernel 画成一个点，看离屋顶多远。</li>
+<li><strong>Memory Workload Analysis</strong>：每一层（L1 / L2 / 显存）的流量和命中率；合并访存不好时，"sectors / request"会偏大（理想是 4，第 6 章）。</li>
+<li><strong>Warp State Statistics</strong>：warp 都在等什么。<code>Stall Long Scoreboard</code> = 等显存；<code>Stall MIO Throttle</code> / <code>Short Scoreboard</code> = shared memory 压力；<code>Stall Barrier</code> = 等 <code>__syncthreads()</code>。</li>
+<li><strong>Occupancy</strong>：理论值、实测值、卡在哪道门槛（第 8 章）。</li>
+<li><strong>Source</strong> 页：把耗时对应到每一行源码和 SASS。</li>
+</ol>
+<p>Mac 上没有 NVIDIA GPU，这些工具都要到云 GPU 上用；本地只能读报告（GPU MODE L8 有一次完整演示的字幕）。</p>
+<h3 id="roofline">动画演示：roofline</h3>
+<p><img alt="roofline" src="../animations/09-roofline.gif" /></p>
+<p>可交互版：<a href="../animations/09-roofline.html">animations/09-roofline.html</a>。开关：<strong>GPU</strong>（H100 BF16 / A6000 FP32）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>横轴是算术强度（对数），纵轴是可达性能（对数）；斜线是带宽限制，水平线是算力限制，拐点是脊点；</li>
+<li>播放时依次把向量加法、ReLU、softmax、FP32 GEMM、BF16 GEMM 放到图上；</li>
+<li>每个点下方写着它是 memory-bound 还是 compute-bound、上限是多少；</li>
+<li>换成 A6000 FP32，看脊点从 295 降到 39，GEMM 和 softmax 的位置关系怎么变。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：LayerNorm 前向（BF16 输入输出，FP32 计算），每个元素读 1 次、写 1 次，大约做 8 次浮点运算。算术强度是多少？在 H100 上它是哪种 bound？上限是多少 TFLOP/s？评价这个 kernel 应该看什么指标？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：你测一个 kernel：输入 4 MB，循环跑 100 次取平均，算出有效带宽 5 TB/s，比 H100 的显存带宽还高。可能哪里出了问题？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：Nsight Compute 报告显示 Memory 18%、Compute 22%，Warp State 里最多的是 Stall Long Scoreboard，occupancy 只有 12%。你的判断是什么？下一步试什么？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>先分三类：算不过来、搬不过来、GPU 在闲着；<br />
+算术强度 = FLOP ÷ 字节，脊点 = 算力 ÷ 带宽；低于脊点看带宽，高于脊点看算力；<br />
+计时用 event，先预热，取中位数，小输入清 L2；<br />
+先 nsys 看全局，再 ncu 看单个：SOL 两个数，warp 在等什么。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C20（roofline：性能 = min(峰值算力, 强度 × 带宽)；脊点；H100 BF16 约 295 FLOP/byte）</li>
+<li>C21（正确计时五条：event / 预热 / 中位数 / 清 L2 / 频率）</li>
+<li>C22（Nsight 两件套分工；ncu 先看 SOL、warp stall 原因）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ Best Practices §9</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 900–1084 行</td>
+<td>CPU / GPU 计时器、理论带宽与有效带宽</td>
+</tr>
+<tr>
+<td>★ Horace He「Making Deep Learning Go Brrrr From First Principles」</td>
+<td>在线 horace.io/brrr_intro.html（〔旧知〕）</td>
+<td>compute / memory / overhead 三分法</td>
+</tr>
+<tr>
+<td>★ GPU MODE L8 Performance Checklist</td>
+<td><code>text/gpu-mode-lecture-08-cuda-performance-checklist.txt</code></td>
+<td>带 ncu 实操的性能清单</td>
+</tr>
+<tr>
+<td>Nsight Compute guide</td>
+<td><code>docs/nsight-compute-profiling-guide-v2026.3.1.txt</code> 的 Sections / Roofline / Warp Stall 部分</td>
+<td>每个指标的定义</td>
+</tr>
+<tr>
+<td>Oxford「Nsight」「performance debugging」讲义</td>
+<td><code>text/oxford-Nsight.txt</code>、<code>text/oxford-NVIDIA_performance_debugging.txt</code></td>
+<td>NVIDIA 工程师讲的排查流程</td>
+</tr>
+<tr>
+<td>How to Scale Your Model 第 12 章</td>
+<td>在线 jax-ml.github.io/scaling-book/gpus</td>
+<td>H100 / B200 / GB200 的 roofline 推导</td>
+</tr>
+<tr>
+<td>Williams, Waterman, Patterson「Roofline」（CACM 2009）</td>
+<td>在线（〔旧知〕）</td>
+<td>roofline 模型的原始论文</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>roofline</strong>：<span class="arithmatex">\(P = \min(P_{\text{peak}}, I \cdot B)\)</span>，<span class="arithmatex">\(I\)</span> 为算术强度，<span class="arithmatex">\(B\)</span> 为带宽；脊点 <span class="arithmatex">\(I^* = P_{\text{peak}}/B\)</span>。</li>
+<li><strong>矩阵乘的算术强度</strong>：<span class="arithmatex">\(M \times K\)</span> 乘 <span class="arithmatex">\(K \times N\)</span>，FLOP <span class="arithmatex">\(= 2MNK\)</span>，最少字节 <span class="arithmatex">\(= s(MK + KN + MN)\)</span>（<span class="arithmatex">\(s\)</span> 为每元素字节数）。方阵 <span class="arithmatex">\(N\)</span>：<span class="arithmatex">\(I = 2N^3 / (3sN^2) = 2N/(3s)\)</span>，随 <span class="arithmatex">\(N\)</span> 线性增长——所以大矩阵乘一定 compute-bound，小矩阵乘（如 decode 时 batch = 1 的矩阵向量乘，强度约为 1 量级）一定 memory-bound。</li>
+<li><strong>有效带宽</strong>：<span class="arithmatex">\(B_{\text{eff}} = (B_r + B_w)/t\)</span>。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>公式 / 代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>算术强度</td>
+<td>FLOP ÷ (读 + 写字节)</td>
+</tr>
+<tr>
+<td>可达性能</td>
+<td><code>min(peak_flops, intensity * bandwidth)</code></td>
+</tr>
+<tr>
+<td>event 计时</td>
+<td><code>cudaEventRecord</code> / <code>cudaEventSynchronize</code> / <code>cudaEventElapsedTime</code></td>
+</tr>
+<tr>
+<td>全局时间线</td>
+<td><code>nsys profile -o out ./app</code></td>
+</tr>
+<tr>
+<td>单 kernel 报告</td>
+<td><code>ncu --set full -k &lt;kernel名&gt; -o rep ./app</code></td>
+</tr>
+<tr>
+<td>Python 里计时</td>
+<td><code>triton.testing.do_bench(fn)</code>（自动预热、清 L2、取分位数）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch09_roofline.py</code>，配套测试 <code>tests/test_ch07_12.py</code>；同一章的 notebook：<code>notebooks/ch09_roofline.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（Nsight Systems / Nsight Compute 要 NVIDIA GPU [GPU]；计时规范用 NumPy 在 CPU 上演示）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch09_roofline.py   # 一步一步打印  
+uv run pytest tests/test_ch07_12.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二步 脊点</td>
+<td>989 / 3.35</td>
+<td><code>ridge(**H100_BF16)</code></td>
+<td>295 FLOP/byte</td>
+</tr>
+<tr>
+<td>第二步 四个 kernel</td>
+<td>FLOP ÷ 字节</td>
+<td><code>intensity_vec_add_fp32()</code> 等 + <code>bound(...)</code></td>
+<td>0.083、0.25 → memory；683、1365 → compute</td>
+</tr>
+<tr>
+<td>第二步 向量加法上限</td>
+<td>强度 × 带宽</td>
+<td><code>attainable(1/12, **H100_BF16)</code></td>
+<td>0.28 TFLOP/s，峰值的 0.028%</td>
+</tr>
+<tr>
+<td>第二步 Boehm 的账</td>
+<td>137 GFLOP ÷ 30 T；268 MB ÷ 768 G</td>
+<td><code>boehm_lower_bounds()</code></td>
+<td>4.57 ms、0.35 ms（Boehm 写 4.5、0.34）</td>
+</tr>
+<tr>
+<td>第三步 计时</td>
+<td>预热 + 中位数 + 有效带宽</td>
+<td><code>time_it(fn)</code>、<code>effective_bandwidth(8n, 4n, t)</code></td>
+<td>因机器而异</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">def attainable(intensity, peak, bw):        # roofline 一条公式
+    return min(peak, intensity * bw)
+
+ridge = peak / bw                            # 脊点
+for _ in range(warmup): fn()                 # 先预热
+ts = [timed(fn) for _ in range(repeat)]      # 重复多次
+t = np.median(ts)                            # 取中位数
+bw_eff = (read_bytes + write_bytes) / t      # 有效带宽
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>Boehm 的 4.5 ms、0.34 ms 是截断的</strong>：代码算出 4.57 ms 和 0.349 ms，测试按 ±0.1 / ±0.01 的容差核对。268 MB 里包括读 C（因为公式有 β·C）和写 C，一共 4 × 4092² × 4 字节。</li>
+<li><strong>CPU 上的 <code>time.perf_counter</code> 不需要同步</strong>：NumPy 的加法是同步执行的。GPU 上要换成 CUDA event，或者计时前后都 <code>cudaDeviceSynchronize()</code>（第 4 章）。</li>
+<li><strong>CPU 算出的"有效带宽"会受缓存影响</strong>：数组小到能放进 CPU 缓存时，测出来比内存带宽高——和讲义说的"小输入要清 L2"是同一个坑。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>n = 4_000_000</code> 改成 4_000 和 40_000_000，看测出来的"有效带宽"怎么变（小数组全在缓存里）。</li>
+<li>用 <code>attainable</code> 把 A6000 FP32 的 roofline 画几个点：强度 1、10、39、100。</li>
+</ul><nav class="pager"><a href="08-occupancy.html">← 第 8 章 · occupancy 与延迟隐藏：一个 SM 上同时养多少个 warp</a><a href="10-reduction.html">第 10 章 · 归约：一百万个数求和，怎么让一千个线程分着加 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

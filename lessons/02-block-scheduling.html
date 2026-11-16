@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 2 章 · block 为什么必须互不依赖：block 怎么被分到 SM 上 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="2-block-block-sm">第 2 章 · block 为什么必须互不依赖：block 怎么被分到 SM 上</h1><p><a class="btn" href="../animations/02-block-waves.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：一个 grid 有 1000 个 block，GPU 只有 132 个 SM，它们是怎么被执行的？为什么 CUDA 规定不同 block 之间不能互相等？"一波一波"执行会带来什么性能问题？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/01-thread-hierarchy.html">第 1 章 线程层级</a> · 下一章：<a href="../lessons/03-warp-simt.html">第 3 章 warp 与 SIMT</a><br />
+对应原文：PG §1.2.2.1（<code>materials/text/cuda-programming-guide.txt</code> 第 1000–1058 行）、§2.3.7 Kernel Launch and Occupancy（第 4431–4470 行）、§3.2.2.2 Hardware Multithreading（第 8716–8753 行）；Oxford lec1 第 19 页（<code>text/oxford-lec1.txt</code> 第 278–292 行）</p>
+<p>本章缩写：SM = Streaming Multiprocessor（流式 / 多处理器）· GPC = Graphics Processing Cluster（图形 / 处理 / 集群，若干 SM 组成的一组）· CTA = Cooperative Thread Array（协作 / 线程 / 数组，PTX 和硬件文档里对 block 的叫法）· PG = Programming Guide（编程指南）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="gpu-block-2026-11-14">第一步：GPU 是一排车间，block 是一张张工单（2026-11-14）</h3>
+<p>GPU 芯片上有很多个 <strong>SM</strong>。H100 SXM 有 132 个，B200 有 148 个，入门级的 T4 有 40 个。每个 SM 是一个独立的"车间"：有自己的计算单元、寄存器和 shared memory。</p>
+<p>启动 kernel 时，grid 里的每个 block 就是一张<strong>工单</strong>。硬件里的调度器（block scheduler）做的事很简单（PG §2.3.7）：</p>
+<ol>
+<li>看哪个车间还有空位（寄存器、shared memory、线程数都够），就把一张工单派过去；</li>
+<li>所有车间都满了，就等，等某个车间做完一张工单再派下一张；</li>
+<li>直到所有工单派完、做完。</li>
+</ol>
+<p>PG 原文强调两点：<strong>派到哪个 SM、按什么顺序派，程序既不能控制也不能查询</strong>；而且 "no ordering guarantees are made by the scheduler"（调度器不保证任何顺序）。</p>
+<p><strong>一个 block 一旦派给某个 SM，就在那个 SM 上一直跑到结束</strong>（PG §1.2.2.1："run to completion on that SM"）。所以同一个 block 的线程共享这个 SM 的 shared memory、能用 <code>__syncthreads()</code> 互相等——这是第 1 章说"block 是能互相配合的一组线程"的硬件原因。</p>
+<h3 id="block-2026-11-14">第二步：为什么不同 block 不能互相等（2026-11-14）</h3>
+<p>假设 block 7 要等 block 900 先算出一个数。如果 GPU 上同时只能放 264 个 block（132 个 SM × 每个 2 个），block 900 根本还没被派出去；而 block 7 占着车间在死等，它不走，就腾不出位置给 block 900——<strong>死锁</strong>。</p>
+<p>所以 PG 立了一条规矩（§1.2.2.1）：</p>
+<blockquote>
+<p>程序必须允许 block <strong>以任意顺序、并行或串行地</strong>执行。</p>
+</blockquote>
+<p>也就是说：<strong>同一个 grid 里，一个线程不能依赖另一个 block 的结果，也不能和另一个 block 的线程同步</strong>。</p>
+<p>这条规矩换来的好处是<strong>可扩展性</strong>：同一个程序，在 40 个 SM 的 T4 上一次跑 40 份，在 148 个 SM 的 B200 上一次跑 148 份，都对，只是快慢不同。PG 原话是 CUDA 能让"任意大的 grid 在任意大小的 GPU 上运行"。</p>
+<p><strong>那 block 之间要交换数据怎么办？</strong> 三条路，后面章节会讲：</p>
+<table>
+<thead>
+<tr>
+<th>办法</th>
+<th>怎么做</th>
+<th>章节</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>拆成两个 kernel</td>
+<td>第一个 kernel 写结果到显存，第二个 kernel 再读；kernel 之间天然有先后</td>
+<td>第 10 章归约</td>
+</tr>
+<tr>
+<td>原子操作</td>
+<td>每个 block 把部分结果 <code>atomicAdd</code> 到同一个地址，不需要等对方</td>
+<td>第 11 章</td>
+</tr>
+<tr>
+<td>thread block cluster</td>
+<td>Hopper 起可以把相邻几个 block 绑成一组，保证同时在一个 GPC 里运行，组内可以同步、访问对方的 shared memory（PG §1.2.2.1.1）</td>
+<td>第 17 章</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-2026-11-14">第三步：一波一波地执行——wave 与尾部浪费（2026-11-14）</h3>
+<p>假设一个 SM 同时能放 2 个 block（能放几个由资源决定，第 8 章细讲），GPU 有 4 个 SM，于是<strong>一次最多同时跑 4 × 2 = 8 个 block</strong>。这"一次能同时跑的量"叫一个 <strong>wave（波）</strong>。</p>
+<p>grid 有 20 个 block 时：</p>
+<div class="arithmatex">\[\text{波数} = \left\lceil \frac{20}{8} \right\rceil = 3\]</div>
+<p>前两波各跑 8 个，第三波只有 4 个：这时一半的车间是空的。如果每个 block 耗时一样，总时间是 3 个 block 时长，但硬件利用率只有</p>
+<div class="arithmatex">\[\frac{20}{3 \times 8} = 83\%\]</div>
+<p>这就是 <strong>tail effect（尾部效应）</strong>：最后一波不满，那段时间 GPU 有一部分在闲着。</p>
+<p><strong>数字演示（H100）</strong>：132 个 SM，每个 SM 放 1 个大 block（GEMM kernel 很常见）。</p>
+<table>
+<thead>
+<tr>
+<th>grid 大小</th>
+<th>波数</th>
+<th>最后一波占满多少 SM</th>
+<th>利用率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>132</td>
+<td>1</td>
+<td>132 / 132</td>
+<td>100%</td>
+</tr>
+<tr>
+<td>133</td>
+<td>2</td>
+<td>1 / 132</td>
+<td>133 / 264 ≈ 50%</td>
+</tr>
+<tr>
+<td>264</td>
+<td>2</td>
+<td>132 / 132</td>
+<td>100%</td>
+</tr>
+</tbody>
+</table>
+<p>多一个 block，耗时几乎翻倍。这就是为什么矩阵乘法 kernel 很在意 tile 大小和 SM 数的配合，后面会看到 <strong>persistent kernel、Stream-K</strong> 这类专门对付尾部效应的办法（第 18 章）。</p>
+<p><strong>反过来，block 太少也不行</strong>：grid 只有 50 个 block，132 个 SM 里 82 个从头到尾都闲着。经验规则是 <strong>block 数至少要是 SM 数的几倍</strong>，让每个 SM 都有活干，尾部占比也变小。</p>
+<h3 id="sm-block-warp2026-11-14">第四步：SM 内部——block 再拆成 warp（2026-11-14）</h3>
+<p>PG §3.2.2.2：SM 收到 block 后，把它按 32 个线程一组切成 <strong>warp</strong>，线程号 0–31 是第 0 个 warp，32–63 是第 1 个……切法永远固定。warp 数 = <span class="arithmatex">\(\lceil T / 32 \rceil\)</span>（T 是 block 的线程数）。</p>
+<p>每个 warp 的寄存器、程序计数器都一直留在 SM 片上，所以 <strong>SM 在不同 warp 之间切换不花任何代价</strong>：每个时钟周期，warp 调度器挑一个"下一条指令已经准备好"的 warp 发射出去。一个 warp 在等显存数据时，就换另一个 warp 来算——这是 GPU 隐藏延迟的核心手段，第 8 章细讲。warp 内部怎么执行是下一章的内容。</p>
+<h3 id="block-sm">动画演示：block 一波一波派到 SM 上</h3>
+<p><img alt="block 分波执行" src="../animations/02-block-waves.gif" /></p>
+<p>可交互版：<a href="../animations/02-block-waves.html">animations/02-block-waves.html</a>。开关：<strong>grid 大小</strong>（8 / 20 / 33）、<strong>每个 SM 能放几个 block</strong>（1 / 2）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>左边是排队的 block（工单），右边是 4 个 SM（车间），每个车间有 1 或 2 个槽位；</li>
+<li>每一帧派一批、做完一批，block 的完成顺序每次"从头开始"都会变——它们互相不等，所以顺序不重要；</li>
+<li>最后一波亮红色的空槽就是尾部浪费，下方统计显示波数和利用率；</li>
+<li>答完题 2 再把 grid 调成 33，看最后一波有多空。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：block 3 里的线程想读 block 5 写进显存的结果，于是在 kernel 里写了一个循环一直等那个值出现。为什么这在 CUDA 编程模型里是错的？在什么情况下它可能"碰巧能跑"、什么情况下一定会卡死？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：一张卡有 80 个 SM，你的 kernel 每个 SM 能同时放 3 个 block。grid 是 500 个 block 时，要跑几波？最后一波有多少个 block？按"每个 block 耗时相同"估算硬件利用率是多少？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：同样的 kernel，从 40 个 SM 的 T4 换到 132 个 SM 的 H100，你什么都不改，结果为什么还是对的？如果 grid 只有 64 个 block，在 H100 上会出现什么性能问题？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>block 是工单，SM 是车间，谁空派给谁，顺序不保证；<br />
+派了就做完，中途不换车间；<br />
+block 之间不许等，要交换就拆 kernel、用原子、上 cluster；<br />
+一次跑满叫一波，最后一波不满是尾巴，block 数要是 SM 数的好几倍。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C04（block 调度规则：顺序不保证、派了就跑完、block 间不能同步）</li>
+<li>C05（wave 与尾部效应：波数 = ⌈block 数 / (SM 数 × 每 SM block 数)⌉）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG 13.4.2 §1.2.2.1</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 1000–1058 行（含 Figure 4 block 分配到 SM）</td>
+<td>"任意顺序、并行或串行"这条规矩的原文</td>
+</tr>
+<tr>
+<td>★ PG §2.3.7</td>
+<td>第 4431–4470 行</td>
+<td>调度器怎么派 block、不保证顺序、能查询哪些 SM 资源上限</td>
+</tr>
+<tr>
+<td>PG §3.2.2.2 Hardware Multithreading</td>
+<td>第 8716–8753 行</td>
+<td>block 切 warp 的固定规则、warp 切换零开销</td>
+</tr>
+<tr>
+<td>PG §1.2.2.1.1 Thread Block Clusters</td>
+<td>第 1059–1076 行</td>
+<td>block 间协作的正规办法（第 17 章细讲）</td>
+</tr>
+<tr>
+<td>Hopper tuning guide §4.1.1</td>
+<td><code>text/hopper-tuning-guide.txt</code> 第 141–155 行</td>
+<td>H100 每 SM 最多 32 个 block、64 个 warp、64K 寄存器、228 KB shared memory</td>
+</tr>
+<tr>
+<td>NVIDIA 博客 "Matrix Multiplication Background User's Guide" 中 wave quantization 一节</td>
+<td>在线（本地无）</td>
+<td>尾部效应在 GEMM 里的官方解释（〔旧知〕）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>波数</strong>：每 SM 放 <span class="arithmatex">\(b\)</span> 个 block、共 <span class="arithmatex">\(S\)</span> 个 SM，grid 有 <span class="arithmatex">\(G\)</span> 个 block，则波数 <span class="arithmatex">\(W = \lceil G / (bS) \rceil\)</span>；每个 block 耗时相同时，利用率 <span class="arithmatex">\(= G / (W \cdot bS)\)</span>。<span class="arithmatex">\(G\)</span> 是 <span class="arithmatex">\(bS\)</span> 的整数倍时利用率 100%；<span class="arithmatex">\(G = kbS + 1\)</span> 时最差。</li>
+<li><strong>为什么 block 多了尾巴就小</strong>：最后一波最多浪费 <span class="arithmatex">\(bS - 1\)</span> 个槽位，占总槽位 <span class="arithmatex">\(W \cdot bS\)</span> 的比例随 <span class="arithmatex">\(W\)</span> 增大而变小，约为 <span class="arithmatex">\(1/W\)</span> 量级。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>公式 / 代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>block 切 warp</td>
+<td>warp 数 <span class="arithmatex">\(= \lceil T / 32 \rceil\)</span>；warp <span class="arithmatex">\(w\)</span> 包含线程 <span class="arithmatex">\(32w\)</span> 到 <span class="arithmatex">\(32w+31\)</span></td>
+</tr>
+<tr>
+<td>波数</td>
+<td><span class="arithmatex">\(\lceil G / (b \cdot S) \rceil\)</span></td>
+</tr>
+<tr>
+<td>查 SM 数</td>
+<td><code>cudaDeviceProp p; cudaGetDeviceProperties(&amp;p, 0); p.multiProcessorCount</code></td>
+</tr>
+<tr>
+<td>规矩</td>
+<td>同一 grid 内：不依赖别的 block 的结果，不和别的 block 同步</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch02_block_waves.py</code>，配套测试 <code>tests/test_ch01_06.py</code>；同一章的 notebook：<code>notebooks/ch02_block_waves.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch02_block_waves.py   # 一步一步打印  
+uv run pytest tests/test_ch01_06.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一、二步 调度顺序不保证</td>
+<td>谁空派给谁</td>
+<td><code>schedule(10, 2, 2, seed)</code> 打乱完成顺序，<code>run_blocks</code> 每个 block 只写自己的部分和</td>
+<td>三种顺序结果相同</td>
+</tr>
+<tr>
+<td>第三步 4 个 SM × 2</td>
+<td><span class="arithmatex">\(\lceil 20 / 8 \rceil\)</span></td>
+<td><code>wave_stats(20, 4, 2)</code></td>
+<td>3 波，最后一波 4 个，利用率 83%</td>
+</tr>
+<tr>
+<td>第三步 H100 表</td>
+<td><span class="arithmatex">\(133 / 264\)</span></td>
+<td><code>wave_stats(133, 132, 1)</code></td>
+<td>2 波，最后一波 1 / 132，50.4%</td>
+</tr>
+<tr>
+<td>第三步 block 太少</td>
+<td>132 − 50</td>
+<td><code>132 - 50</code></td>
+<td>82 个 SM 闲着</td>
+</tr>
+<tr>
+<td>第四步 切 warp</td>
+<td>线程号 ÷ 32</td>
+<td><code>warp_of(t)</code></td>
+<td>0、31 → warp 0；32、63 → warp 1</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">per_wave = sms * per_sm                    # 一波能同时跑几个 block
+waves = math.ceil(grid / per_wave)
+last = grid - (waves - 1) * per_wave        # 最后一波有几个
+util = grid / (waves * per_wave)            # 尾部效应下的利用率
+order = rng.permutation(batch)              # 同一波里谁先做完是随机的
+</code></pre>
+<p><strong>代码里才看得到的 2 件事</strong>：</p>
+<ol>
+<li><strong>结果和顺序无关，是因为 block 只写自己那一格</strong>：<code>run_blocks</code> 里 block b 只写 <code>out[b]</code>、只读自己那一段数据。要是某个 block 去读别人的 <code>out</code>，换个 seed 结果就会变——这正是第二步说的"block 之间不许等"。</li>
+<li><strong><code>wave_stats</code> 假设每个 block 耗时一样</strong>：真实 GPU 上 block 耗时有快有慢，调度器会把新 block 派给先空出来的 SM，所以"波"的边界没有这么整齐；但"最后一段时间有 SM 闲着"这件事不变。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>wave_stats(20, 4, 2)</code> 的 grid 换成 33（动画里的另一个开关），看最后一波有多空。</li>
+<li>在 <code>run_blocks</code> 里故意让 block b 读 <code>out[b - 1]</code>，换几个 seed 看结果还一不一样。</li>
+</ul><nav class="pager"><a href="01-thread-hierarchy.html">← 第 1 章 · 一个 kernel 怎么分给成千上万个线程：grid / block / thread 与全局编号</a><a href="03-warp-simt.html">第 3 章 · warp 与 SIMT：32 个线程一起走，分岔了怎么办 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 5 章 · GPU 内存层级：寄存器、shared memory、L1 / L2、显存 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="5-gpu-shared-memoryl1-l2">第 5 章 · GPU 内存层级：寄存器、shared memory、L1 / L2、显存</h1><p><a class="btn" href="../animations/05-memory-hierarchy.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：kernel 里的变量和数组到底存在哪？为什么"离计算单元越近越快、越小"？一个 H100 上每一层有多大、多快？写 kernel 时哪些东西是自己管、哪些是硬件替你管？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/04-host-device-program.html">第 4 章 完整程序</a> · 下一章：<a href="../lessons/06-coalescing.html">第 6 章 合并访存</a><br />
+对应原文：PG §1.2.3.3 On-Chip Memory（<code>materials/text/cuda-programming-guide.txt</code> 第 1314–1349 行）、§2.3.3 GPU Device Memory Spaces（第 3209–3742 行，含 2.3.3.1–2.3.3.8）；Hopper tuning guide §4.1.1、§4.2（<code>text/hopper-tuning-guide.txt</code> 第 141–155、235–250 行）；Gordić《Inside NVIDIA GPUs》Memory 一节（<code>text/blog-gordic-inside-nvidia-gpus-matmul.txt</code> 第 37–58 行）；Oxford lec2（<code>text/oxford-lec2.txt</code>）</p>
+<p>本章缩写：HBM = High Bandwidth Memory（高带宽 / 显存，堆叠在 GPU 旁边的 DRAM）· DRAM = Dynamic Random-Access Memory（动态 / 随机访问 / 存储器）· SRAM = Static RAM（静态随机存储器，片上缓存用的）· GMEM / SMEM / RMEM = Global / Shared / Register MEMory（全局内存 / 共享内存 / 寄存器）· DSMEM = Distributed Shared MEMory（分布式 / 共享内存）· L1 / L2 = Level 1 / Level 2 cache（一级 / 二级缓存）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-14">第一步：为什么要分层——快的贵且小（2026-11-14）</h3>
+<p>Gordić 的解释（第 39 行）：片上 SRAM 快，但每个存储单元面积大；DRAM 密度高，但慢。所以芯片设计只能妥协：<strong>离计算单元最近放一点点最快的，往外一层层放更大、更慢的</strong>。</p>
+<p><strong>类比：厨师做菜。</strong></p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>厨房里对应</th>
+<th>谁管</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>寄存器 RMEM</td>
+<td>厨师手里拿着的食材</td>
+<td>编译器</td>
+</tr>
+<tr>
+<td>shared memory SMEM</td>
+<td>灶台边的小台面，同一个灶的几个厨师（同一 block）共用</td>
+<td><strong>你</strong></td>
+</tr>
+<tr>
+<td>L1 cache</td>
+<td>灶台边的小冰箱，自动放最近用过的</td>
+<td>硬件</td>
+</tr>
+<tr>
+<td>L2 cache</td>
+<td>后厨的大冷库，所有灶（所有 SM）共用</td>
+<td>硬件</td>
+</tr>
+<tr>
+<td>显存 HBM（global memory）</td>
+<td>城外仓库，什么都有，但一趟要很久</td>
+<td><strong>你</strong>（分配、拷贝、怎么读）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="h100-2026-11-14">第二步：H100 每一层的数字（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>容量（H100 SXM）</th>
+<th>带宽 / 延迟量级</th>
+<th>作用域</th>
+<th>来源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>寄存器</td>
+<td>每 SM 64K 个 32 位寄存器 = 256 KB；每线程最多 255 个</td>
+<td>每周期就能用，延迟最低</td>
+<td>单个线程</td>
+<td>Hopper guide §4.1.1</td>
+</tr>
+<tr>
+<td>shared memory + L1</td>
+<td>每 SM 共 256 KB 片上存储，其中 shared 最多 228 KB（单个 block 最多 227 KB）</td>
+<td>延迟约几十个周期 〔旧知〕</td>
+<td>一个 block（cluster 内可跨 block，叫 DSMEM）</td>
+<td>Hopper guide §4.1.1、§4.2.4</td>
+</tr>
+<tr>
+<td>L2</td>
+<td>50 MB，全 GPU 共享</td>
+<td>延迟约两百周期 〔旧知〕</td>
+<td>所有 SM</td>
+<td>Hopper guide §4.2.2</td>
+</tr>
+<tr>
+<td>HBM3</td>
+<td>80 GB</td>
+<td>约 3.35 TB/s（Hopper guide 写 up to 3 TB/s）；延迟约几百周期 〔旧知〕</td>
+<td>所有线程 + host 拷贝</td>
+<td>Hopper guide §4.2.1</td>
+</tr>
+</tbody>
+</table>
+<p>有两个反直觉的地方：</p>
+<ol>
+<li><strong>寄存器总量和 shared + L1 一样大</strong>（Gordić 第 50 行）：每个 SM 256 KB 寄存器。CPU 每个核心才几 KB 寄存器。GPU 把大量面积给了寄存器，因为要同时养活几十个 warp（第 2 章：warp 切换不花代价，前提是每个 warp 的寄存器一直放在片上）。</li>
+<li><strong>132 个 SM 的 shared memory 加起来约 30 MB</strong>，和 L2 是同一个量级。所以"把数据放进 shared memory 反复用"能装下的东西并不少。</li>
+</ol>
+<p>延迟数字没有在本地文档里找到官方表，上表只给量级（〔旧知〕）。记住规律就够了：<strong>每往外走一层，延迟大约高一个数量级，带宽低一个数量级，容量大一到两个数量级</strong>（Gordić 第 53 行）。</p>
+<h3 id="kernel-2026-11-14">第三步：kernel 里的变量放在哪（2026-11-14）</h3>
+<p>PG §2.3.3 逐个讲了每种内存。对照代码最清楚：</p>
+<pre><code class="language-cpp">__constant__ float coef[16];                 // 常量内存：只读、所有线程看同一份，有专门的缓存
+
+__global__ void k(float* g, int n) {         // g 指向 global memory（显存）
+    __shared__ float tile[256];              // shared memory：整个 block 一份
+    int i = blockIdx.x * blockDim.x + threadIdx.x;   // i：寄存器
+    float acc = 0.0f;                        // acc：寄存器
+    float buf[4];                            // 小数组、下标是常量 → 通常放寄存器
+    float big[256];                          // 大数组或下标运行时才知道 → local memory（其实在显存里！）
+    tile[threadIdx.x] = g[i];                // 显存 → shared
+    __syncthreads();
+    acc += tile[(threadIdx.x + 1) % 256] * coef[0];
+    g[i] = acc;                              // 寄存器 → 显存
+}
+</code></pre>
+<p><strong>最大的坑：local memory 不在本地。</strong> PG §2.3.3.4 原话："The 'local' label refers to its logical scope, not its physical location"——"local"说的是<strong>只有这个线程能看见</strong>，物理位置却在<strong>显存</strong>里，延迟和带宽都和 global memory 一样。编译器在三种情况下会把变量放到 local memory：</p>
+<ol>
+<li>数组的下标编译时确定不了（如 <code>buf[k]</code>，k 是运行时变量）；</li>
+<li>结构体或数组太大，寄存器放不下；</li>
+<li>寄存器用超了，<strong>溢出（spill）</strong>。</li>
+</ol>
+<p>用 <code>nvcc -Xptxas -v</code>（或 <code>--resource-usage</code>）编译能看到每个 kernel 用了多少寄存器、有没有 spill。</p>
+<h3 id="2026-11-14_1">第四步：谁管谁——优化就是"把数据往上搬，搬一次多用几次"（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th>内存</th>
+<th>程序员能控制什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>寄存器</td>
+<td>间接：少用大数组、循环展开要适度、<code>__launch_bounds__</code> 限制（第 8 章）</td>
+</tr>
+<tr>
+<td>shared memory</td>
+<td>完全手动：声明、谁写谁读、<code>__syncthreads()</code> 同步</td>
+</tr>
+<tr>
+<td>L1 / L2</td>
+<td>基本自动；可以给提示（如 L2 持久化窗口，PG §4.14）</td>
+</tr>
+<tr>
+<td>global memory</td>
+<td>分配和拷贝；<strong>访问模式</strong>决定效率（下一章的合并访存）</td>
+</tr>
+</tbody>
+</table>
+<p>后面大半本书的优化都是同一个思路：<strong>数据从显存读进来一次，在 shared memory / 寄存器里被多个线程、多次计算复用</strong>。矩阵乘法（第 13–14 章）、归约（第 10 章）、FlashAttention（第 22 章）全是这个套路。</p>
+<h3 id="_2">动画演示：内存层级金字塔</h3>
+<p><img alt="内存层级" src="../animations/05-memory-hierarchy.gif" /></p>
+<p>可交互版：<a href="../animations/05-memory-hierarchy.html">animations/05-memory-hierarchy.html</a>。点任意一层看它的容量、作用域、谁来管。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>从下往上依次点亮显存 → L2 → L1 / shared → 寄存器，旁边的条形长度按对数比例画容量；</li>
+<li>每层旁边显示"一趟要多久"的相对延迟；</li>
+<li>最后一帧演示"读一次、用很多次"：同一块数据从显存搬上 shared memory 后，被 8 个线程复用。</li>
+</ol>
+<h2 id="_3">练习与作答记录</h2>
+<p><strong>题 1</strong>：一个 kernel 里写了 <code>float tmp[64];</code>，然后在循环里用 <code>tmp[j]</code>（j 是循环变量，循环次数由参数 n 决定）。这个数组很可能放在哪种内存里？为什么它会让 kernel 变慢？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：H100 每个 SM 有 64K 个 32 位寄存器。如果一个 block 有 1024 个线程，每个线程最多能用多少个寄存器才能让这个 block 放得下？如果每个线程要用 128 个寄存器，block 最多能有多少个线程？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：说出 shared memory 和 L1 cache 的两个相同点和两个不同点。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_4">口诀</h2>
+<blockquote>
+<p>手里、台面、小冰箱、大冷库、城外仓库：越往外越大越慢；<br />
+寄存器编译器管，shared 自己管，L1 / L2 硬件管，显存怎么读你来管；<br />
+local 不在本地，在显存里，数组下标别用变量；<br />
+优化一句话：读一次，用很多次。</p>
+</blockquote>
+<h2 id="_5">本章复习卡片</h2>
+<ul>
+<li>C11（五层内存与作用域：寄存器 / shared / L1 / L2 / 显存，谁管）</li>
+<li>C12（local memory 物理上在显存；三种情况会被放进去）</li>
+</ul>
+<h2 id="_6">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_7">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §2.3.3</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 3209–3742 行</td>
+<td>每种内存空间逐个讲：global、shared（静态 / 动态分配）、寄存器、local、constant、cache、texture、DSMEM</td>
+</tr>
+<tr>
+<td>★ Gordić《Inside NVIDIA GPUs》</td>
+<td><code>text/blog-gordic-inside-nvidia-gpus-matmul.txt</code> 第 37–80 行</td>
+<td>H100 内存层级图、SM 内部结构、并行 vs 并发</td>
+</tr>
+<tr>
+<td>Hopper tuning guide §4.1–4.2</td>
+<td><code>text/hopper-tuning-guide.txt</code> 第 136–305 行（§4.2.4 是 256 KB 统一 L1 / shared）</td>
+<td>H100 的寄存器、shared memory、L2、HBM3 具体数字</td>
+</tr>
+<tr>
+<td>Blackwell tuning guide 的 Occupancy 与 L2、shared memory 小节</td>
+<td><code>text/blackwell-tuning-guide.txt</code> 第 136–230 行</td>
+<td>B200 的同类数字：shared 仍是 228 KB，GB200 的 L2 是 126 MB</td>
+</tr>
+<tr>
+<td>Oxford lec2</td>
+<td><code>text/oxford-lec2.txt</code></td>
+<td>不同内存和变量类型的课堂讲法</td>
+</tr>
+<tr>
+<td>How to Scale Your Model 第 12 章</td>
+<td>在线 jax-ml.github.io/scaling-book/gpus</td>
+<td>从 roofline 角度看各层带宽（第 9 章再读）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_8">数学原理</h3>
+<ul>
+<li><strong>复用率决定该放哪层</strong>：一个数据被读 <span class="arithmatex">\(r\)</span> 次。全放显存要读 <span class="arithmatex">\(r\)</span> 次显存；先搬进 shared 再读，只读 1 次显存 + <span class="arithmatex">\(r\)</span> 次 shared。<span class="arithmatex">\(r\)</span> 越大收益越大；<span class="arithmatex">\(r=1\)</span>（比如向量加法）时搬进 shared 毫无意义。</li>
+<li><strong>寄存器约束</strong>：每线程寄存器数 <span class="arithmatex">\(R\)</span>、block 线程数 <span class="arithmatex">\(T\)</span>，要求 <span class="arithmatex">\(R \cdot T \le 65536\)</span>（每 SM 的寄存器总数），否则 kernel 启动失败（PG §1.2.3.3 原文）。</li>
+</ul>
+<h3 id="_9">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>静态 shared memory</td>
+<td><code>__shared__ float tile[256];</code></td>
+</tr>
+<tr>
+<td>动态 shared memory</td>
+<td><code>extern __shared__ float s[];</code> + 启动时 <code>&lt;&lt;&lt;grid, block, bytes&gt;&gt;&gt;</code></td>
+</tr>
+<tr>
+<td>常量内存</td>
+<td><code>__constant__ float c[16];</code> + <code>cudaMemcpyToSymbol(c, h, bytes)</code></td>
+</tr>
+<tr>
+<td>看寄存器 / spill</td>
+<td><code>nvcc -Xptxas -v</code> 或 <code>nvcc --resource-usage</code></td>
+</tr>
+<tr>
+<td>超过 48 KB 动态 shared</td>
+<td><code>cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_10">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch05_memory_hierarchy.py</code>，配套测试 <code>tests/test_ch01_06.py</code>；同一章的 notebook：<code>notebooks/ch05_memory_hierarchy.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch05_memory_hierarchy.py   # 一步一步打印  
+uv run pytest tests/test_ch01_06.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二步 寄存器</td>
+<td>64K × 4 B</td>
+<td><code>H100["寄存器（每 SM）"]</code></td>
+<td>256 KB，和片上 shared + L1 一样大</td>
+</tr>
+<tr>
+<td>第二步 shared 合计</td>
+<td>132 × 228 KB</td>
+<td><code>sm_totals()</code></td>
+<td>29.4 MB（讲义"约 30 MB"），L2 50 MB</td>
+</tr>
+<tr>
+<td>第四步 读一次用多次</td>
+<td>8 个线程用同一块 8 个数</td>
+<td><code>global_reads(8, False)</code> / <code>global_reads(8, True)</code></td>
+<td>64 次 vs 8 次</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">H100 = {&quot;寄存器（每 SM）&quot;: 65536 * 4,      # 64K 个 32 位寄存器
+        &quot;shared memory（每 SM 最多）&quot;: 228 * KB,
+        &quot;L2（全 GPU）&quot;: 50 * MB, &quot;HBM3（全 GPU）&quot;: 80 * GB}
+SMS * H100[&quot;shared memory（每 SM 最多）&quot;] / MB   # 132 个 SM 的 shared 合计
+s = g.copy()                                     # 读一次放进&quot;shared&quot;
+(s[None, :] * w).sum(axis=1)                     # 8 个线程都从 shared 里读
+</code></pre>
+<p><strong>代码里才看得到的 2 件事</strong>：</p>
+<ol>
+<li><strong>延迟没有写进代码</strong>：讲义里延迟只给了量级（〔旧知〕），本地文档里没有官方表，所以代码只用容量做计算。</li>
+<li><strong><code>KB = 2**10</code></strong>：容量按 1024 进位算；带宽（GB/s、TB/s）习惯上按 1000 进位，第 4、9 章的带宽账用的是 <code>1e9</code>。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>global_reads</code> 的线程数改成 32、256，看"各读各的"和"经过 shared"差几倍。</li>
+<li>按 B200 的数（148 个 SM、shared 也是 228 KB）重算 shared 合计。</li>
+</ul><nav class="pager"><a href="04-host-device-program.html">← 第 4 章 · 一个完整的 CUDA 程序：分配、拷贝、启动、同步、查错</a><a href="06-coalescing.html">第 6 章 · 合并访存：一个 warp 一次读显存，要搬几趟 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

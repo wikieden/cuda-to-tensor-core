@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 23 章 · 推理 kernel：decode 为什么是 memory-bound，以及 paged KV、split-KV、MLA、megakernel · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="23-kerneldecode-memory-bound-paged-kvsplit-kvmlamegakernel">第 23 章 · 推理 kernel：decode 为什么是 memory-bound，以及 paged KV、split-KV、MLA、megakernel</h1><p><a class="btn" href="../animations/23-paged-kv.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：大模型生成一个 token 时，GPU 的 Tensor Core 为什么大部分在闲着？KV cache 怎么像操作系统的分页内存一样管理？一条很长的序列怎么分给很多 SM 一起算 attention？DeepSeek 的 MLA 在 kernel 层面省了什么？megakernel 又是为了解决什么？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/22-flashattention.html">第 22 章 FlashAttention</a> · 下一章：<a href="../lessons/24-tile-dsl.html">第 24 章 Tile 模型与 DSL</a><br />
+对应原文：04 调研 §3.3（FlashInfer、DeepGEMM / FlashMLA）、§3.5（megakernel：HazyResearch「Look Ma, No Bubbles!」、MPK arXiv 2512.22219）；FlashAttention-2 §2.3（online softmax 合并，<code>materials/text/flashattention-2.txt</code> 第 138–200 行）；<code>distributed-pretraining/materials/code/DeepGEMM-README.md</code>；本仓库 llm-full-stack 推理部分；PagedAttention（vLLM 论文，〔旧知〕）</p>
+<p>本章缩写：KV cache = Key / Value cache（键值缓存：之前所有 token 的 K、V）· GEMV = GEneral Matrix-Vector multiply（矩阵乘向量）· GQA = Grouped-Query Attention（分组查询注意力：多个 Q 头共享一组 K、V 头）· MLA = Multi-head Latent Attention（多头潜在注意力，DeepSeek-V2/V3 用）· TPOT = Time Per Output Token（每个输出 token 的耗时）· prefill / decode（预填充：一次处理整段 prompt / 解码：一次生成一个 token）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="decode-2026-11-14">第一步：decode 是矩阵乘向量（2026-11-14）</h3>
+<p>推理分两个阶段：</p>
+<ul>
+<li><strong>prefill</strong>：把整段 prompt（几千个 token）一次喂进去，矩阵乘的形状是 <span class="arithmatex">\([\text{token 数} \times d] \times [d \times d]\)</span>——大矩阵乘，compute-bound；</li>
+<li><strong>decode</strong>：之后每步只生成 <strong>1 个 token</strong>（batch 里每条序列 1 个），矩阵乘退化成 <span class="arithmatex">\([b \times d] \times [d \times d]\)</span>，<span class="arithmatex">\(b\)</span> 是 batch 大小——<strong>矩阵乘向量（GEMV）</strong>。</li>
+</ul>
+<p>第 9 章的公式：<span class="arithmatex">\(M \times K\)</span> 乘 <span class="arithmatex">\(K \times N\)</span>，FLOP <span class="arithmatex">\(= 2MKN\)</span>，最少字节 ≈ 权重 <span class="arithmatex">\(KN \times 2\)</span>（BF16，<span class="arithmatex">\(M\)</span> 很小时权重占绝大部分）。</p>
+<div class="arithmatex">\[\text{算术强度} \approx \frac{2bKN}{2KN} = b \ \text{FLOP/byte}\]</div>
+<p>batch = 1 时只有约 1 FLOP/byte，H100 的脊点是 295。<strong>Tensor Core 闲着 99% 以上，时间全花在把权重从显存读进来。</strong></p>
+<p><strong>数字演示</strong>（Llama-3-8B，BF16 权重约 16 GB，H100 约 3.35 TB/s）：</p>
+<div class="arithmatex">\[\text{每个 token 至少} \ \frac{16 \text{ GB}}{3.35 \text{ TB/s}} \approx 4.8 \text{ ms} \Rightarrow \text{batch 1 上限约 } 210 \text{ token/s}\]</div>
+<p>所以 decode 优化的主线是：<strong>少读字节</strong>（量化权重 / KV、融合）和<strong>让一次读到的权重服务更多请求</strong>（加大 batch）。</p>
+<h3 id="kv-cache-paged-attention2026-11-14">第二步：KV cache 与 paged attention（2026-11-14）</h3>
+<p>decode 的 attention：新 token 的 Q（1 行）要和<strong>之前所有 token 的 K、V</strong> 做 attention。这些 K、V 每步都重新算太浪费，所以存起来——<strong>KV cache</strong>。</p>
+<p>Llama-3-8B（32 层、8 个 KV 头、头维度 128，GQA）每个 token 的 KV cache：</p>
+<div class="arithmatex">\[2 \times 32 \times 8 \times 128 \times 2 \text{ 字节} = 128 \text{ KB}\]</div>
+<p>一条 8K token 的序列就是 1 GB。几十条并发请求，KV cache 能吃掉几十 GB 显存。</p>
+<p><strong>问题</strong>：每条序列的长度事先不知道。如果为每条序列预留"最大长度"的连续显存，大量空间浪费（碎片）。</p>
+<p><strong>PagedAttention（vLLM）</strong>：借鉴操作系统的<strong>分页内存</strong>——KV cache 切成固定大小的<strong>页</strong>（比如每页 16 个 token），每条序列用一张<strong>页表（block table）</strong>记录"第 k 页在显存的哪个物理位置"。序列变长就再分一页，用完归还。</p>
+<p>对 kernel 的影响：attention kernel 不能再假设 K、V 是连续的，要<strong>先查页表、再按页读</strong>——地址计算多一步，访存以页为单位合并（第 6 章）。FlashInfer、vLLM、SGLang 的 decode attention kernel 都是这种分页版本（04 调研 §3.3）。</p>
+<h3 id="split-kv-sm2026-11-14">第三步：split-KV——一条长序列分给多个 SM（2026-11-14）</h3>
+<p>decode attention 的并行度：batch × 头数。batch = 1、8 个 KV 头时只有 8 份活，132 个 SM 里 124 个闲着（第 2 章的"block 太少"），而序列很长（几万 token）。</p>
+<p><strong>split-KV（Flash-Decoding 的思路，〔旧知〕）</strong>：把一条序列的 K、V <strong>沿长度切成 S 段</strong>，每段一个 block 各算一份<strong>局部</strong>的 attention 输出，外加局部的 <span class="arithmatex">\((m, \ell)\)</span>（或 LSE）；最后一个小 kernel 把 S 份结果<strong>按第 21 章的合并式</strong>合起来：</p>
+<div class="arithmatex">\[m = \max_s m_s, \quad \ell = \sum_s \ell_s e^{m_s - m}, \quad O = \frac{\sum_s \ell_s e^{m_s - m} O_s}{\ell}\]</div>
+<p>（<span class="arithmatex">\(O_s\)</span> 是第 s 段已经归一化的输出。）第 21 章说"<span class="arithmatex">\((m, \ell)\)</span> 能合并就能并行"，在这里兑现了：<strong>同一个算法，FlashAttention 是沿 K 方向顺序合并，split-KV 是沿 K 方向并行合并。</strong></p>
+<h3 id="mla-kv-cache-2026-11-14">第四步：MLA——让 KV cache 变小（2026-11-14）</h3>
+<p>DeepSeek-V2 / V3 的 <strong>MLA</strong>：不直接缓存每个头的 K、V，而是缓存一个<strong>低维的潜在向量</strong>（latent），用的时候再通过矩阵投影还原。KV cache 大幅缩小（〔旧知〕：DeepSeek-V3 每 token 每层缓存 512 维 latent + 64 维 RoPE 部分，约相当于普通多头注意力的几十分之一）。</p>
+<p>kernel 层面的两点：</p>
+<ul>
+<li>推理时可以把"还原 K"的投影矩阵<strong>吸收</strong>（absorb）到 Q 那一侧，attention 直接在潜在空间算——decode 时变成"很多个 Q 头共享同一份 latent KV"，算术强度比 GQA 还高；</li>
+<li>这让 decode attention 从纯 memory-bound 往 compute-bound 方向移动，于是需要专门的 kernel：DeepSeek 开源的 <strong>FlashMLA</strong>（Hopper）就是为 MLA decode 写的（04 调研 §3.3）。</li>
+</ul>
+<h3 id="kerneldecode-2026-11-14">第五步：量化 kernel——decode 的另一把刀（2026-11-14）</h3>
+<p>decode 是读权重读出来的，<strong>权重从 BF16 压到 INT4，字节数降为 1/4，速度上限提高约 4 倍</strong>。kernel 要做的事：读 4 位权重 → 在寄存器里反量化成 BF16 → 和激活做矩阵乘（Marlin 这类 W4A16 kernel〔旧知〕）。关键是<strong>反量化融合在 GEMM 内部</strong>（第 21 章的融合），不能先把整个权重解压成 BF16 再乘——那样就白压缩了。</p>
+<p>FP8 / NVFP4 则不需要反量化：Tensor Core 直接吃低精度（第 20 章的块缩放），对 prefill 和训练也有用。</p>
+<h3 id="megakernel-kernel-2026-11-14">第六步：megakernel——消灭 kernel 之间的空隙（2026-11-14）</h3>
+<p>batch 小时，一次 decode 前向有几百个小 kernel，每个只跑几微秒到几十微秒。kernel 之间的启动开销和"上一个写回、下一个读入"的流水线空隙（bubble），能占到总时间的可观比例（第 9 章的第三类"overhead-bound"）。</p>
+<p>两类办法：</p>
+<ol>
+<li><strong>CUDA Graphs</strong>：把几百个 kernel 录成一张图一次提交，去掉 CPU 侧启动开销（第 26 章）；</li>
+<li><strong>megakernel</strong>：干脆把整个前向写进<strong>一个</strong> persistent kernel（第 18 章），每个 SM 从指令队列里取"下一步做哪个算子的哪一块"。HazyResearch 的「Look Ma, No Bubbles!」把 Llama-3.2-1B 整个前向融成一个 kernel，batch 1 达到 H100 带宽的 78%；Mirage Persistent Kernel（MPK）用编译器自动生成 megakernel，延迟最多降 1.7 倍（04 调研 §3.5）。</li>
+</ol>
+<h3 id="paged-kv-cache-split-kv">动画演示：paged KV cache 与 split-KV</h3>
+<p><img alt="推理 kernel" src="../animations/23-paged-kv.gif" /></p>
+<p>可交互版：<a href="../animations/23-paged-kv.html">animations/23-paged-kv.html</a>。开关：<strong>split 段数</strong>（1 / 2 / 4）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>上半部分：三条不同长度的序列，各自的页表指向显存里零散分布的物理页（颜色区分序列）；新生成一个 token 时，序列末尾那页填满就分配新页；</li>
+<li>下半部分：序列 A 的 decode attention。split = 1 时只有一个 SM 在扫整条序列；split = 4 时四个 SM 各扫一段，最后合并 <span class="arithmatex">\((m, \ell, O)\)</span>；</li>
+<li>右边显示"用了几个 SM"和"相对耗时"。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：一个 70B 参数的模型用 BF16 权重、batch = 1 在 H100 上 decode，每个 token 至少要多少毫秒？如果把权重量化成 INT4 呢？如果 batch 提到 32（忽略 KV cache 的读取），每个 token 的平均耗时大约怎么变？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：KV cache 每页 16 个 token、每 token 128 KB。一条长度 1000 的序列要占几页？最后一页浪费了多少？如果不分页、为每条序列预留 8192 个 token 的空间，浪费多少？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：split-KV 把一条序列分成两段，第 1 段得到 <span class="arithmatex">\(m_1 = 2, \ell_1 = 3\)</span>，第 2 段得到 <span class="arithmatex">\(m_2 = 4, \ell_2 = 1\)</span>。合并后的 <span class="arithmatex">\(m\)</span>、<span class="arithmatex">\(\ell\)</span> 是多少？两段的已归一化输出 <span class="arithmatex">\(O_1\)</span>、<span class="arithmatex">\(O_2\)</span> 在最终输出里各占多大权重？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>prefill 算不过来，decode 搬不过来：batch 为 1 时强度约为 1；<br />
+每个 token 至少读一遍全部权重：权重字节 ÷ 带宽 = 速度上限；<br />
+KV cache 分页：页表查地址，不怕碎片；<br />
+长序列 split-KV：分段各算，按 (m, ℓ) 合并；<br />
+MLA 缓存 latent、吸收投影，KV 小了强度高了；<br />
+量化要在 GEMM 里反量化；小 kernel 太多就上 Graph 或 megakernel。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C54（decode 的算术强度 ≈ batch；每 token 时间下限 = 权重字节 ÷ 带宽）</li>
+<li>C55（paged KV cache 与页表；split-KV 用 <span class="arithmatex">\((m, \ell)\)</span> 合并实现序列维并行）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ FlashInfer 源码与文档</td>
+<td>在线 github.com/flashinfer-ai/flashinfer</td>
+<td>分页 attention、MLA、采样、MoE 的生产级 kernel（study-plan 阶段 9.5）</td>
+</tr>
+<tr>
+<td>★ Kwon et al.「Efficient Memory Management for Large Language Model Serving with PagedAttention」（vLLM，SOSP 2023）</td>
+<td>在线（〔旧知〕）</td>
+<td>分页 KV cache 的原始论文</td>
+</tr>
+<tr>
+<td>★ HazyResearch「Look Ma, No Bubbles!」</td>
+<td>在线</td>
+<td>megakernel 的动机与设计</td>
+</tr>
+<tr>
+<td>Flash-Decoding 博客（Tri Dao 等，2023）</td>
+<td>在线（〔旧知〕）</td>
+<td>split-KV 的原始说明</td>
+</tr>
+<tr>
+<td>DeepSeek-V2 论文 MLA 一节、FlashMLA README</td>
+<td>在线；本仓库 <code>distributed-pretraining/materials/</code></td>
+<td>MLA 的数学与 kernel</td>
+</tr>
+<tr>
+<td>MPK 论文</td>
+<td>arXiv 2512.22219</td>
+<td>编译器自动生成 megakernel</td>
+</tr>
+<tr>
+<td>llm-full-stack 专题</td>
+<td><code>llm-full-stack/notes/00-full-stack-map.md</code> 推理部分；<code>llm-full-stack/materials/</code> 的 nano-vllm / mini-sglang 源码</td>
+<td>推理系统全景，看 kernel 在系统里的位置</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>decode 的算术强度</strong>：<span class="arithmatex">\(\frac{2bKN}{s_w KN + s_a b(K + N)} \approx \frac{2b}{s_w}\)</span>（权重字节 <span class="arithmatex">\(s_w\)</span>；<span class="arithmatex">\(b\)</span> 小时激活项可忽略）。BF16 权重时 ≈ <span class="arithmatex">\(b\)</span>。</li>
+<li><strong>KV cache 大小</strong>：每 token <span class="arithmatex">\(2 \times L \times h_{kv} \times d_h \times s\)</span> 字节（<span class="arithmatex">\(L\)</span> 层数、<span class="arithmatex">\(h_{kv}\)</span> KV 头数、<span class="arithmatex">\(d_h\)</span> 头维度、<span class="arithmatex">\(s\)</span> 每元素字节）。</li>
+<li><strong>split-KV 合并</strong>：同第 21 章 LSE 合并；最终 <span class="arithmatex">\(O = \sum_s w_s O_s\)</span>，<span class="arithmatex">\(w_s = \ell_s e^{m_s - m} / \ell\)</span>，<span class="arithmatex">\(\sum_s w_s = 1\)</span>。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>公式 / 代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每 token 下限</td>
+<td><code>t_min = weight_bytes / mem_bw</code></td>
+</tr>
+<tr>
+<td>KV 字节 / token</td>
+<td><code>2 * n_layers * n_kv_heads * head_dim * bytes_per_elem</code></td>
+</tr>
+<tr>
+<td>页表寻址</td>
+<td><code>phys = block_table[seq][pos / PAGE] * PAGE + pos % PAGE</code></td>
+</tr>
+<tr>
+<td>split 合并</td>
+<td><code>m = max(m_s); w_s = l_s * exp(m_s - m); O = Σ w_s O_s / Σ w_s</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch23_inference_kernels.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch23_inference_kernels.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch23_inference_kernels.py   # 一步一步打印  
+uv run pytest tests/test_ch19_23.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 decode 强度</td>
+<td><span class="arithmatex">\(2bKN / 2KN = b\)</span></td>
+<td><code>decode_intensity(1, 4096, 4096)</code></td>
+<td>1 FLOP/byte</td>
+</tr>
+<tr>
+<td>第一步 速度上限</td>
+<td>16 GB ÷ 3.35 TB/s</td>
+<td><code>ms_per_token(16e9)</code></td>
+<td>4.8 ms，约 209 token/s（讲义"约 210"）</td>
+</tr>
+<tr>
+<td>第二步 KV cache</td>
+<td>2 × 32 × 8 × 128 × 2 B</td>
+<td><code>kv_bytes_per_token(32, 8, 128)</code></td>
+<td>128 KB；8K token = 1 GB</td>
+</tr>
+<tr>
+<td>第二步 paged</td>
+<td>页表查物理位置</td>
+<td><code>paged_gather(pool, [7, 2, 5], 40, 16)</code></td>
+<td>取回的 K 和连续存放的一样</td>
+</tr>
+<tr>
+<td>第三步 split-KV</td>
+<td>按 (m, ℓ) 合并 4 段</td>
+<td><code>split_kv(q, K, V, 4)</code> vs <code>attention(q, K, V)</code></td>
+<td>一致</td>
+</tr>
+<tr>
+<td>第五步 INT4</td>
+<td>字节 1/4</td>
+<td><code>ms_per_token(4e9)</code></td>
+<td>1.2 ms，上限提高 4 倍</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">t = np.arange(length)
+phys = np.array(block_table)[t // page] * page + t % page   # 先查页表，再按页内偏移
+K = pool[phys]
+
+for Ks, Vs in zip(np.array_split(K, splits), np.array_split(V, splits)):
+    ...                                          # 每段算 (m_s, ℓ_s) 和已归一化的 O_s
+w = [l_s * np.exp(m_s - m) for ...]              # 第 21 章的合并式
+O = sum(w_s * O_s) / sum(w_s)
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>pool</code> 里其他页是别人的数据</strong>：模拟里用随机数填满显存池，只有页表指到的 3 页是这条序列的；取错一页结果就对不上。</li>
+<li><strong>split-KV 合并的是"已经归一化"的 O_s</strong>：所以权重是 <span class="arithmatex">\(\ell_s e^{m_s - m}\)</span>，最后再除以总的 ℓ；如果每段存的是没除 ℓ 的 O，合并式要相应改。</li>
+<li><strong>K 除以 8 只是为了数值好看</strong>：让分数不至于太大，和算法无关。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>split_kv</code> 的段数换成 1、7、2000（每段一个 token），确认结果都一样。</li>
+<li>把 <code>paged_gather</code> 的页大小换成 8，重新排页表，确认还能取回同样的 K。</li>
+</ul><nav class="pager"><a href="22-flashattention.html">← 第 22 章 · FlashAttention：从 FA1 到 FA4，每一代在解决什么瓶颈</a><a href="24-tile-dsl.html">第 24 章 · Tile 模型与 kernel DSL：cuTile、Triton、CuTe DSL、TileLang、Helion →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 16 章 · 异步拷贝与多级流水线：搬下一块的时候算这一块 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="16">第 16 章 · 异步拷贝与多级流水线：搬下一块的时候算这一块</h1><p><a class="btn" href="../animations/16-async-pipeline.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：第 13 章的 tile 循环"搬 → 等 → 算 → 等"，搬的时候算力闲着、算的时候显存闲着，怎么让两件事同时进行？Ampere 的 <code>cp.async</code>（LDGSTS）比"读到寄存器再写 shared"好在哪？双缓冲、多级流水线怎么排？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/15-tensor-core-mma.html">第 15 章 Tensor Core</a> · 下一章：<a href="../lessons/17-hopper-tma-mbarrier.html">第 17 章 Hopper ①：TMA、mbarrier 与 cluster</a><br />
+对应原文：PG §3.2.2.3 Asynchronous Execution Features（<code>materials/text/cuda-programming-guide.txt</code> 第 8754–8865 行）、§4.11 Pipelines（第 18584–18958 行）、§4.12.1 Using LDGSTS 与 §4.12.1.2 Prefetching Data（第 18967–19532 行）；Best Practices §10.2.3.4（<code>text/cuda-c-best-practices-guide.txt</code> 第 2041–2143 行）；PTX §9.7.10.28.3 cp.async（<code>text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code> 第 2227–2486 行）</p>
+<p>本章缩写：LDGSTS = LoaD Global, STore Shared（读全局、写共享，<code>cp.async</code> 对应的 SASS 指令）· CC = Compute Capability（计算能力）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="tile-2026-11-14">第一步：同步 tile 循环的空转（2026-11-14）</h3>
+<p>第 13 章的循环：</p>
+<pre><code>for 每一段 K:
+    ① 读显存 → 写 shared      （显存忙，计算单元闲）
+    ② __syncthreads()
+    ③ 用 shared 算             （计算单元忙，显存闲）
+    ④ __syncthreads()
+</code></pre>
+<p>① 和 ③ 是串着的。设搬一块要 4 个单位时间、算一块要 4 个单位，8 段 K 就是 8 × (4 + 4) = <strong>64 个单位</strong>。如果"搬第 k+1 块"和"算第 k 块"能同时做，就接近 4 + 8 × 4 = <strong>36 个单位</strong>。</p>
+<p><strong>类比：流水线做饭。</strong> 不是"洗完一个菜、切完、炒完，再洗下一个"，而是"炒第 1 个菜的时候，第 2 个菜已经在洗了"。</p>
+<p>第 8 章靠"多个 warp 轮流"来藏延迟；这一章是另一条路：<strong>同一个 warp 自己把"搬"和"算"错开</strong>。高性能 GEMM 的 occupancy 很低（第 14 章），恰恰更需要这一招。</p>
+<h3 id="2026-11-14">第二步：老写法的两个问题（2026-11-14）</h3>
+<pre><code class="language-cpp">As[ty][tx] = A[...];      // 实际上是两步：LDG（显存 → 寄存器） + STS（寄存器 → shared）
+</code></pre>
+<ol>
+<li><strong>会卡住线程</strong>：STS 要等 LDG 的数据到了才能执行，这个线程在这里停几百个周期；</li>
+<li><strong>绕道寄存器</strong>：数据先进寄存器再写 shared，白白占用寄存器和指令（Best Practices §10.2.3.4："avoids an intermediary register file access"）。</li>
+</ol>
+<p>想"搬下一块"的同时"算这一块"，就得先把下一块的数据读进寄存器暂存——寄存器又不够（第 14 章的 GEMM 已经用了上百个）。</p>
+<h3 id="cpasync2026-11-14">第三步：<code>cp.async</code>——下单直送台面，不经过手（2026-11-14）</h3>
+<p>Ampere（CC 8.0）加了 <strong>LDGSTS</strong>，PTX 叫 <code>cp.async</code>（PG §4.12.1）：</p>
+<ul>
+<li><strong>一条指令直接从显存搬到 shared memory</strong>，不经过寄存器；</li>
+<li><strong>异步</strong>：发出后线程立刻往下走，硬件在后台搬；</li>
+<li>每次搬 4 / 8 / 16 字节；16 字节时绕过 L1（L1 BYPASS），不污染缓存；最好 128 字节对齐；</li>
+<li>搬完了要靠<strong>完成机制</strong>告诉你：老的 <code>commit_group</code> / <code>wait_group</code>，或者 barrier / pipeline 对象。</li>
+</ul>
+<pre><code class="language-cpp">// PTX 风格（CUTLASS / 手写 kernel 常用）
+cp.async.cg.shared.global [smem_addr], [gmem_addr], 16;   // 发出一次 16 字节异步拷贝
+cp.async.commit_group;                                     // 把之前发出的打成一组
+cp.async.wait_group 1;                                     // 等到&quot;最多还剩 1 组没完成&quot;
+__syncthreads();                                           // 别人搬的数据我也要看见
+</code></pre>
+<p>PG 的提醒：<strong>每个线程默认只等自己发出的拷贝</strong>，所以等完之后还要 <code>__syncthreads()</code>，别人搬的那部分才对你可见。</p>
+<p>C++ 层面的封装是 <code>cuda::memcpy_async</code> + <code>cuda::pipeline</code>（PG §4.11、§4.12.1.2 的例子），CUTLASS 里叫 <code>cp_async</code>。</p>
+<h3 id="2026-11-14_1">第四步：双缓冲与多级流水线（2026-11-14）</h3>
+<p>有了"发出就走"的拷贝，就可以开<strong>两份 shared buffer</strong>（双缓冲）：</p>
+<pre><code>预取：发出 第 0 块 → buf[0]
+for k = 0 .. n-1:
+    发出 第 k+1 块 → buf[(k+1) % 2]      // 异步，不等
+    等 第 k 块 到齐（wait_group 1 + __syncthreads）
+    用 buf[k % 2] 计算
+    __syncthreads()                      // 大家算完，buf[k % 2] 才能被下下轮覆盖
+</code></pre>
+<p>推广到 <strong>S 级（S stages）</strong>：开 S 份 buffer，始终有 S − 1 块在路上。PG §4.12.1.2 的 <code>prefetch_kernel&lt;num_stages&gt;</code> 就是这个结构：<code>shared_offset[s] = s * block.size()</code>，用 <code>(stage + 1) % num_stages</code> 轮转。</p>
+<p><strong>为什么要多于 2 级？</strong> 显存延迟很长（几百周期）而且不稳定，一块算完时下一块可能还没到。多几块在路上，等待的概率就小。代价是 shared memory 用量 × S。CUTLASS 的 Ampere GEMM 常用 3–5 级（〔旧知〕），具体由 shared memory 预算和 tile 大小决定。</p>
+<p><strong>数字演示</strong>（搬 4、算 2，单位时间；8 块）：</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>总时间</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>同步：搬完再算</td>
+<td>8 × (4 + 2) = 48</td>
+<td>串行</td>
+</tr>
+<tr>
+<td>双缓冲</td>
+<td>8 × 4 + 2 = 34</td>
+<td>搬比算慢，瓶颈在搬：8 次搬运首尾相接，只多出最后一块的计算；计算被完全藏进搬运</td>
+</tr>
+<tr>
+<td>3 级</td>
+<td>34</td>
+<td>搬是瓶颈时，多加级数也快不了——<strong>流水线最多把总时间压到 max(搬, 算) × n</strong></td>
+</tr>
+</tbody>
+</table>
+<p>反过来，算比搬慢（GEMM 的正常情况）时，流水线让显存搬运完全藏在计算后面，总时间 ≈ 算的时间。<strong>流水线不能让慢的那一步变快，只能把快的那一步藏起来。</strong></p>
+<h3 id="barrier-2026-11-14">第五步：同步原语的升级——barrier 的"相位"（2026-11-14）</h3>
+<p><code>__syncthreads()</code> 是"全员停下等"。异步拷贝时代需要更细的同步：<strong>"数据到了"和"大家用完了"是两件不同的事</strong>。PG §4.10 的异步 barrier（<code>cuda::barrier</code>）：</p>
+<ul>
+<li>初始化时设定"期望到达数"；</li>
+<li>线程调 <code>arrive()</code> 报到（不停下），拿到一个 token；</li>
+<li>需要时再调 <code>wait(token)</code> 等这一轮（<strong>phase，相位</strong>）完成；</li>
+<li>计数到零时，barrier 自动重置、进入下一相位（PG §4.10.2）。</li>
+</ul>
+<p>"先报到、做点别的、再等"——让同步本身也可以和计算重叠。Hopper 的 <strong>mbarrier</strong> 在此基础上还能<strong>按字节数计数</strong>（"等 TMA 搬完 32 KB"），下一章细讲。</p>
+<h3 id="vs-vs">动画演示：同步 vs 双缓冲 vs 三级流水线</h3>
+<p><img alt="异步拷贝流水线" src="../animations/16-async-pipeline.gif" /></p>
+<p>可交互版：<a href="../animations/16-async-pipeline.html">animations/16-async-pipeline.html</a>。开关：<strong>级数</strong>（1 = 同步 / 2 / 3）、<strong>搬与算的耗时比</strong>（搬慢 / 一样 / 算慢）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>两条时间轴：上面是"搬"（显存 → shared），下面是"算"（Tensor Core）；</li>
+<li>每个色块是一个 K 段，编号相同的块先搬后算；</li>
+<li>右边显示总时间和"显存忙碌率 / 计算忙碌率"；</li>
+<li>把级数从 1 调到 2，看两条轴怎么叠起来；再调成"搬慢"，看为什么 3 级也救不了。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：用自己的话说，<code>cp.async</code> 和 <code>As[ty][tx] = A[...]</code> 的两点区别。为什么等 <code>cp.async</code> 完成之后还需要 <code>__syncthreads()</code>？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：一个 GEMM 的 block tile 是 BM = BN = 128、BK = 32，FP16。每一级 buffer 要放 A 和 B 各一块，一级要多少 KB shared memory？H100 每个 block 最多 227 KB，最多能开几级？实际为什么通常不开这么多？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：搬一块要 3 个单位、算一块要 5 个单位，一共 10 块。同步写法和双缓冲各要多少时间？（估算即可）这时瓶颈在哪？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>搬完再算两头闲，搬这块时算上块；<br />
+cp.async 下单直送台面：不经寄存器、发了就走，搬完只告诉自己，别人要看还得同步；<br />
+双缓冲两份台面轮着用，多级流水多几块在路上；<br />
+流水线只能藏起快的那一步，慢的那一步决定总时间；<br />
+barrier 有相位：先报到、做别的、再等。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C37（<code>cp.async</code> / LDGSTS：显存 → shared 不经寄存器、异步；commit_group / wait_group；等完仍需 <code>__syncthreads()</code>）</li>
+<li>C38（双缓冲与 S 级流水线；总时间 ≈ max(搬, 算) × 块数；shared 用量 × S）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §4.12.1</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 18967–19532 行</td>
+<td>LDGSTS 的尺寸、对齐、完成机制，条件加载、预取（多级流水）完整例子</td>
+</tr>
+<tr>
+<td>★ PG §4.10–4.11</td>
+<td>第 17711–18958 行</td>
+<td>异步 barrier 的相位规则、pipeline 对象、生产者–消费者模式</td>
+</tr>
+<tr>
+<td>Best Practices §10.2.3.4</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 2041–2143 行</td>
+<td>同步拷贝 vs 异步拷贝的微基准</td>
+</tr>
+<tr>
+<td>PTX §9.7.10.28.3</td>
+<td><code>text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code> 第 2227–2486 行</td>
+<td><code>cp.async</code>、<code>commit_group</code>、<code>wait_group</code> 的精确语义</td>
+</tr>
+<tr>
+<td>PG §3.2.2.3</td>
+<td>第 8754–8865 行</td>
+<td>async thread / async proxy 的概念（TMA 也用）</td>
+</tr>
+<tr>
+<td>CUTLASS Ampere GEMM（<code>sgemm_sm80</code> 教程）</td>
+<td><code>code/cutlass/examples-cute-tutorial/</code></td>
+<td>多级 cp.async 流水线的实战代码（M6 里程碑）</td>
+</tr>
+<tr>
+<td>gau-nernst「tcgen05 for dummies」Pipelining 一节</td>
+<td><code>text/blog-gau-nernst-tcgen05-for-dummies.txt</code> 第 742–792 行</td>
+<td>现代写法里的流水线</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>流水线时间</strong>：<span class="arithmatex">\(n\)</span> 块、每块搬 <span class="arithmatex">\(t_l\)</span>、算 <span class="arithmatex">\(t_c\)</span>。同步：<span class="arithmatex">\(n(t_l + t_c)\)</span>。足够级数的流水线：<span class="arithmatex">\(\approx n \cdot \max(t_l, t_c) + \min(t_l, t_c)\)</span>（慢的那一步首尾相接，再加上开头或结尾露在外面的一段快的）。加速比上限 <span class="arithmatex">\(\frac{t_l + t_c}{\max(t_l, t_c)} \le 2\)</span>。</li>
+<li><strong>需要几级</strong>：要藏住延迟 <span class="arithmatex">\(L\)</span>，在路上的块数 <span class="arithmatex">\(\times\)</span> 每块计算时间 <span class="arithmatex">\(\ge L\)</span>，即 <span class="arithmatex">\(S - 1 \ge L / t_c\)</span>（Little 定律的又一次应用，第 8 章）。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PTX 异步拷贝</td>
+<td><code>cp.async.cg.shared.global [s], [g], 16;</code></td>
+</tr>
+<tr>
+<td>提交 / 等待</td>
+<td><code>cp.async.commit_group;</code> / <code>cp.async.wait_group N;</code></td>
+</tr>
+<tr>
+<td>C++ 封装</td>
+<td><code>cuda::memcpy_async(dst, src, bytes, pipeline)</code>；<code>pipeline.producer_acquire / commit</code>、<code>consumer_wait / release</code></td>
+</tr>
+<tr>
+<td>异步 barrier</td>
+<td><code>cuda::barrier&lt;cuda::thread_scope_block&gt; bar; init(&amp;bar, n); auto t = bar.arrive(); bar.wait(std::move(t));</code></td>
+</tr>
+<tr>
+<td>轮转下标</td>
+<td><code>stage = k % S</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch16_async_pipeline.py</code>，配套测试 <code>tests/test_ch13_18.py</code>；同一章的 notebook：<code>notebooks/ch16_async_pipeline.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（<code>cp.async</code> 本身要 CC 8.0+ 的 GPU [GPU]；这里模拟时间线和 barrier 的相位）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch16_async_pipeline.py   # 一步一步打印  
+uv run pytest tests/test_ch13_18.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 搬 4 算 4</td>
+<td>8 × (4 + 4) vs 4 + 8 × 4</td>
+<td><code>pipeline(8, 4, 4, 1)</code> / <code>pipeline(8, 4, 4, 2)</code></td>
+<td>64 vs 36</td>
+</tr>
+<tr>
+<td>第四步 搬 4 算 2</td>
+<td>同步 / 双缓冲 / 3 级</td>
+<td><code>pipeline(8, 4, 2, s)</code></td>
+<td>48、34、34</td>
+</tr>
+<tr>
+<td>第四步 算比搬慢</td>
+<td>≈ 算的时间</td>
+<td><code>pipeline(8, 2, 4, 2)</code></td>
+<td>34 = 32 + 第一次搬 2</td>
+</tr>
+<tr>
+<td>第四步 S 级 buffer</td>
+<td><code>s * block.size()</code></td>
+<td><code>stage_offset(s, 256)</code></td>
+<td>0、256、512</td>
+</tr>
+<tr>
+<td>第五步 相位</td>
+<td>到齐后翻转、重置</td>
+<td><code>Barrier(4)</code>：3 次 <code>arrive</code> 后 <code>done</code> 为 False，第 4 次后 True</td>
+<td>相位 0 → 1，计数回到 4</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">for i in range(n):
+    start = loads[-1][1] if loads else 0            # 搬运一块接一块
+    if i &gt;= stages:
+        start = max(start, computes[i - stages][1]) # 等第 i − S 块算完，buffer 才空
+    loads.append((start, start + t_load))
+    c0 = max(loads[i][1], computes[-1][1] if computes else 0)
+    computes.append((c0, c0 + t_compute))           # 算要等这块搬完
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>stages = 1</code> 就是同步写法</strong>：只有一份 buffer，搬第 i 块要等第 i − 1 块算完，搬和算完全串行。</li>
+<li><strong>模型里只有一条显存通道</strong>：搬运一块接一块，所以"搬是瓶颈"时多加 buffer 也快不了；真实 GPU 上多个 block 一起搬，但每个 block 的规律相同。</li>
+<li><strong><code>Barrier.done(token)</code> 看的是相位有没有翻过去</strong>：和 <code>cuda::barrier::wait(token)</code> 一样，token 记下的是 arrive 时的相位。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>pipeline</code> 的搬运时间改成"不稳定"（比如每块 2 或 6 交替），比较 2 级和 4 级的总时间——这就是讲义说要多于 2 级的原因。</li>
+<li>打印 <code>pipeline(8, 4, 4, 2)</code> 的 <code>loads</code> 和 <code>computes</code>，画成时间线看搬和算怎么错开。</li>
+</ul><nav class="pager"><a href="15-tensor-core-mma.html">← 第 15 章 · Tensor Core：WMMA、mma.sync 与 ldmatrix</a><a href="17-hopper-tma-mbarrier.html">第 17 章 · Hopper ①：TMA、mbarrier、cluster 与分布式 shared memory →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

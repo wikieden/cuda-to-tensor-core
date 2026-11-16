@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 12 章 · 前缀和 scan：每个位置都要&quot;前面所有数的和&quot; · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="12-scan">第 12 章 · 前缀和 scan：每个位置都要"前面所有数的和"</h1><p><a class="btn" href="../animations/12-scan.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：前缀和看起来每一步都依赖上一步，怎么并行？Hillis–Steele 和 Blelloch 两种算法差在哪？block 内用 shuffle 怎么做？跨 block 的 scan 为什么麻烦？scan 在 AI kernel 里用在哪？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/11-warp-shuffle-atomics.html">第 11 章 warp shuffle 与原子操作</a> · 下一章：<a href="../lessons/13-sgemm-tiling.html">第 13 章 SGEMM ①</a><br />
+对应原文：Oxford lec4 第 20–33 页（<code>materials/text/oxford-lec4.txt</code> 第 413–650 行：定义、局部 scan 两个版本、全局 scan 两种做法）；PG §4.4.6.2 Scans（<code>text/cuda-programming-guide.txt</code> 第 15546–15563 行，cooperative groups 的 scan）；PMPP 第 5 版 ch.11 Prefix sum；Stanford CS149 asst3（<code>courses/stanford-cs149/asst3/</code>）</p>
+<p>本章缩写：CS149 = Stanford 并行计算课程编号 · CUB = CUDA UnBound（CCCL 里的块级 / warp 级原语库）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="scan-2026-11-14">第一步：scan 是什么（2026-11-14）</h3>
+<p>Oxford lec4 第 20 页的定义：输入 <span class="arithmatex">\(u_0, u_1, \dots\)</span>，输出</p>
+<ul>
+<li><strong>inclusive scan（包含式）</strong>：<span class="arithmatex">\(v_j = \sum_{i \le j} u_i\)</span>——包括自己；</li>
+<li><strong>exclusive scan（不包含式）</strong>：<span class="arithmatex">\(v_j = \sum_{i &lt; j} u_i\)</span>——不包括自己，<span class="arithmatex">\(v_0 = 0\)</span>。</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>输入</th>
+<th>3</th>
+<th>1</th>
+<th>4</th>
+<th>1</th>
+<th>5</th>
+<th>9</th>
+<th>2</th>
+<th>6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>inclusive</td>
+<td>3</td>
+<td>4</td>
+<td>8</td>
+<td>9</td>
+<td>14</td>
+<td>23</td>
+<td>25</td>
+<td>31</td>
+</tr>
+<tr>
+<td>exclusive</td>
+<td>0</td>
+<td>3</td>
+<td>4</td>
+<td>8</td>
+<td>9</td>
+<td>14</td>
+<td>23</td>
+<td>25</td>
+</tr>
+</tbody>
+</table>
+<p><strong>它有什么用？</strong> 一个典型场景是<strong>并行地决定"我该写到哪"</strong>：每个线程要输出不定个数的结果（比如过滤：满足条件的元素才输出），先让每个线程报出"我要写几个"，对这些数做 exclusive scan，得到的就是每个线程的写入起点。排序（radix sort）、稀疏矩阵、流压缩、MoE 里按专家把 token 分组（统计每个专家几个 token → scan 得到每组起点）都靠它。Mamba 一类状态空间模型的并行训练也是一种（广义的）scan。</p>
+<h3 id="hillissteele2026-11-14">第二步：Hillis–Steele——每轮看得更远（2026-11-14）</h3>
+<p>顺序算法 <span class="arithmatex">\(v_j = v_{j-1} + u_j\)</span> 每步依赖上一步，看似没法并行。换个思路（Oxford lec4 第 23 页，version 1）：</p>
+<ul>
+<li>第 1 轮：每个位置加上<strong>左边隔 1 个</strong>的数 → 每个位置有了"自己 + 左边 1 个"的和；</li>
+<li>第 2 轮：加上<strong>左边隔 2 个</strong>的数 → "自己 + 左边 3 个"；</li>
+<li>第 3 轮：加上<strong>左边隔 4 个</strong>的数 → "自己 + 左边 7 个"；</li>
+<li>……第 n 轮后，每个位置是"自己 + 左边 <span class="arithmatex">\(2^n - 1\)</span> 个"。<span class="arithmatex">\(\log_2 N\)</span> 轮后全部到齐。</li>
+</ul>
+<p><strong>数字演示</strong>（同一组数据）：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>3</th>
+<th>1</th>
+<th>4</th>
+<th>1</th>
+<th>5</th>
+<th>9</th>
+<th>2</th>
+<th>6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>d = 1</td>
+<td>3</td>
+<td>4</td>
+<td>5</td>
+<td>5</td>
+<td>6</td>
+<td>14</td>
+<td>11</td>
+<td>8</td>
+</tr>
+<tr>
+<td>d = 2</td>
+<td>3</td>
+<td>4</td>
+<td>8</td>
+<td>9</td>
+<td>11</td>
+<td>19</td>
+<td>17</td>
+<td>22</td>
+</tr>
+<tr>
+<td>d = 4</td>
+<td>3</td>
+<td>4</td>
+<td>8</td>
+<td>9</td>
+<td><strong>14</strong></td>
+<td><strong>23</strong></td>
+<td><strong>25</strong></td>
+<td><strong>31</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Oxford 的代码：</p>
+<pre><code class="language-cpp">for (int d = 1; d &lt; blockDim.x; d = 2 * d) {
+    __syncthreads();
+    float temp2 = (tid &gt;= d) ? temp[tid - d] : 0;   // 先读
+    __syncthreads();                                 // 所有人都读完
+    temp[tid] += temp2;                              // 再写
+}
+</code></pre>
+<p>注意<strong>两个</strong> <code>__syncthreads()</code>：第一个保证上一轮都写完了，第二个保证这一轮大家都<strong>读完旧值</strong>才开始覆盖（第 7 章的"读完再覆盖也要等"）。Giles 教授在第 25 页自嘲："我最常犯的 CUDA 错误就是该写 <code>__syncthreads()</code> 的地方没写。"</p>
+<p><strong>代价</strong>：每轮几乎所有线程都在加，<span class="arithmatex">\(\log_2 N\)</span> 轮共约 <span class="arithmatex">\(N \log_2 N\)</span> 次加法——比顺序算法的 <span class="arithmatex">\(N - 1\)</span> 次多。这叫<strong>不是 work-efficient（工作量不最优）</strong>。</p>
+<h3 id="blelloch2026-11-14">第三步：Blelloch——先上树、再下树（2026-11-14）</h3>
+<p>Blelloch 的算法（PMPP ch.11 有详解）分两趟，总加法次数约 <span class="arithmatex">\(2N\)</span>，是 work-efficient 的：</p>
+<ol>
+<li><strong>上扫（up-sweep / reduce）</strong>：就是第 10 章的树形归约，但<strong>保留中间结果</strong>：每个父节点存左右子树的和；</li>
+<li><strong>下扫（down-sweep）</strong>：根置 0，往下走：每个节点把自己的值传给左孩子，把"自己 + 左孩子原来的和"传给右孩子。</li>
+</ol>
+<p>走完得到 exclusive scan。轮数是 <span class="arithmatex">\(2\log_2 N\)</span>，比 Hillis–Steele 多一倍，但每轮干活的线程越来越少（或越来越多），总工作量小得多。</p>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>轮数</th>
+<th>总加法</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hillis–Steele</td>
+<td><span class="arithmatex">\(\log_2 N\)</span></td>
+<td><span class="arithmatex">\(\approx N \log_2 N\)</span></td>
+<td>线程多、N 小（如一个 warp 内）</td>
+</tr>
+<tr>
+<td>Blelloch</td>
+<td><span class="arithmatex">\(2 \log_2 N\)</span></td>
+<td><span class="arithmatex">\(\approx 2N\)</span></td>
+<td>N 大、计算资源紧</td>
+</tr>
+</tbody>
+</table>
+<h3 id="block-shuffle-2026-11-14">第四步：block 内用 shuffle 分三层（2026-11-14）</h3>
+<p>Oxford 第 26–28 页的 version 2，和上一章归约的三层结构一样：</p>
+<ol>
+<li><strong>warp 内</strong>：用 <code>__shfl_up_sync</code> 做 Hillis–Steele（32 个数 5 步，寄存器里完成）：</li>
+</ol>
+<p><code>cpp
+   for (int d = 1; d &lt; 32; d *= 2) {
+       float t = __shfl_up_sync(0xffffffff, v, d);
+       if (lane &gt;= d) v += t;
+   }</code>
+2. <strong>warp 之间</strong>：每个 warp 的最后一个 lane（31）把本 warp 的总和写进 <code>__shared__ float ws[32]</code>，同步，第 0 个 warp 对这最多 32 个数再做一次 shuffle scan；
+3. <strong>加回去</strong>：每个线程加上"前面所有 warp 的总和" <code>ws[warp - 1]</code>。</p>
+<h3 id="block-scan2026-11-14">第五步：跨 block 的 scan（2026-11-14）</h3>
+<p>一个 block 只能 scan 几千个数。1 亿个数要很多 block，而<strong>每个 block 都需要前面所有 block 的总和</strong>——这正撞上第 2 章的规矩：block 不能等别的 block。</p>
+<p>Oxford 第 29–33 页给了两种办法：</p>
+<ol>
+<li><strong>三段式（scan-then-propagate）</strong>：kernel ① 每个 block 做局部 scan，并写出本 block 的总和；kernel ② 对这些 block 总和做 scan（block 少，一个 block 就够）；kernel ③ 每个 block 把"前面 block 的总和"加到自己的每个元素上。三次 kernel、数据读写约 3 遍。</li>
+<li><strong>单趟（decoupled look-back，现代 CUB 的做法）</strong>：一个 kernel 完成。为了不死锁，<strong>用原子计数器重新发 block 号</strong>（第一个开始跑的 block 拿到 0 号），保证"我前面的 block 一定已经开始跑了"；每个 block 算完局部总和后公布出去，后面的 block 往回看、把前面的累加起来。Oxford 第 30 页说的就是这个思路："use atomics to create an in-order block ID"。数据只读写一遍，接近 memory copy 的带宽。</li>
+</ol>
+<p>工程上：<strong>直接用 CUB</strong>（<code>cub::DeviceScan::InclusiveSum</code>），或 Python 里 <code>cuda.compute</code> / <code>torch.cumsum</code>。自己写是为了理解。</p>
+<h3 id="hillissteele-blelloch">动画演示：Hillis–Steele 与 Blelloch</h3>
+<p><img alt="scan" src="../animations/12-scan.gif" /></p>
+<p>可交互版：<a href="../animations/12-scan.html">animations/12-scan.html</a>。开关：<strong>算法</strong>（Hillis–Steele / Blelloch）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>8 个数一行，每轮画出"谁加到谁身上"的箭头，格子里更新成新值；</li>
+<li>Hillis–Steele：每轮箭头的跨度翻倍，3 轮出 inclusive 结果；</li>
+<li>Blelloch：先 3 轮上扫（像归约），根清零，再 3 轮下扫，出 exclusive 结果；</li>
+<li>右下角累计加法次数，对比两种算法的总工作量。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：对 <code>[2, 0, 3, 1, 4, 1, 5, 2]</code> 手算 Hillis–Steele 的每一轮，写出 inclusive 和 exclusive 结果。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：Oxford 的 Hillis–Steele 代码里为什么需要两个 <code>__syncthreads()</code>？去掉第二个会出现什么错误？用一个具体的线程举例。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：过滤（stream compaction）：1 亿个数里只保留正数，输出到一个紧凑的新数组。说说怎么用 exclusive scan 让每个线程知道自己该写到输出数组的哪个位置。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>scan：每个位置要前面所有数的和；inclusive 带自己，exclusive 不带；<br />
+Hillis–Steele 每轮看远一倍：log N 轮，N log N 次加，适合 warp 里；<br />
+Blelloch 先上树后下树：2 log N 轮，2N 次加，省工作量；<br />
+读完再写，两道栅栏；<br />
+跨 block：三段式最稳，单趟靠原子发号 + 往回看，生产用 CUB。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C28（inclusive / exclusive scan 定义；scan 的用途：并行决定写入位置）</li>
+<li>C29（Hillis–Steele vs Blelloch：轮数与总工作量）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ Oxford lec4 第 20–33 页</td>
+<td><code>text/oxford-lec4.txt</code> 第 413–650 行</td>
+<td>定义、两个局部 scan 版本、两种全局 scan</td>
+</tr>
+<tr>
+<td>★ PMPP 第 5 版 ch.11</td>
+<td>Prefix sum (scan)</td>
+<td>Kogge–Stone（即 Hillis–Steele）、Brent–Kung、Blelloch 的工作量分析</td>
+</tr>
+<tr>
+<td>GPU Gems 3 第 39 章「Parallel Prefix Sum (Scan) with CUDA」（Harris、Sengupta、Owens）</td>
+<td>在线（〔旧知〕）</td>
+<td>Blelloch 算法的经典图解与 bank conflict 处理</td>
+</tr>
+<tr>
+<td>Merrill &amp; Garland「Single-pass Parallel Prefix Scan with Decoupled Look-back」（2016）</td>
+<td>在线（〔旧知〕）</td>
+<td>CUB 单趟 scan 的原始论文</td>
+</tr>
+<tr>
+<td>CS149 asst3</td>
+<td><code>courses/stanford-cs149/asst3/</code> 的 scan 部分</td>
+<td>动手：自己实现 exclusive scan 和 find_repeats</td>
+</tr>
+<tr>
+<td>Oxford prac8</td>
+<td><code>courses/oxford-cuda-giles/prac8/</code></td>
+<td>scan 练习（<code>scan_*_atomic.cu</code> 是参考解，做完再看）</td>
+</tr>
+<tr>
+<td>PG §4.4.6.2</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 15546–15563 行</td>
+<td>cooperative groups 现成的 <code>inclusive_scan</code> / <code>exclusive_scan</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>Hillis–Steele 正确性</strong>：归纳——第 <span class="arithmatex">\(k\)</span> 轮（<span class="arithmatex">\(d = 2^{k-1}\)</span>）后 <span class="arithmatex">\(v_j = \sum_{i=\max(0, j-2^k+1)}^{j} u_i\)</span>；<span class="arithmatex">\(2^k \ge N\)</span> 时即为前缀和。</li>
+<li><strong>工作量</strong>：Hillis–Steele 第 <span class="arithmatex">\(k\)</span> 轮有 <span class="arithmatex">\(N - 2^{k-1}\)</span> 次加法，总和 <span class="arithmatex">\(N\log_2 N - (N - 1)\)</span>；Blelloch 上扫 <span class="arithmatex">\(N - 1\)</span> 次、下扫 <span class="arithmatex">\(N - 1\)</span> 次。</li>
+<li><strong>exclusive 与 inclusive 互换</strong>：exclusive = inclusive 右移一位、首位补 0；inclusive = exclusive + 原值。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>warp 内 inclusive scan</td>
+<td><code>for (d = 1; d &lt; 32; d &lt;&lt;= 1) { t = __shfl_up_sync(~0u, v, d); if (lane &gt;= d) v += t; }</code></td>
+</tr>
+<tr>
+<td>由 inclusive 得 exclusive</td>
+<td><code>ex = inc - x;</code></td>
+</tr>
+<tr>
+<td>库函数</td>
+<td><code>cub::DeviceScan::InclusiveSum(...)</code>、<code>cub::BlockScan</code>、<code>torch.cumsum</code></td>
+</tr>
+<tr>
+<td>用途模板</td>
+<td><code>pos = exclusive_scan(count)</code>；线程把结果写到 <code>out[pos[t] .. pos[t] + count[t])</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch12_scan.py</code>，配套测试 <code>tests/test_ch07_12.py</code>；同一章的 notebook：<code>notebooks/ch12_scan.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch12_scan.py   # 一步一步打印  
+uv run pytest tests/test_ch07_12.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 定义</td>
+<td>inclusive / exclusive</td>
+<td><code>inclusive(v)</code>、<code>exclusive(v)</code></td>
+<td>3 4 8 9 14 23 25 31 / 0 3 4 8 9 14 23 25</td>
+</tr>
+<tr>
+<td>第二步 Hillis–Steele</td>
+<td>每轮加左边隔 d 个</td>
+<td><code>hillis_steele(v)</code></td>
+<td>三轮结果同讲义表；17 次加法</td>
+</tr>
+<tr>
+<td>第三步 Blelloch</td>
+<td>上扫 + 下扫</td>
+<td><code>blelloch(v)</code></td>
+<td>exclusive 结果；14 次加法</td>
+</tr>
+<tr>
+<td>第四步 warp 内 scan</td>
+<td><code>__shfl_up_sync</code></td>
+<td><code>warp_scan(np.array(v))</code></td>
+<td>= inclusive</td>
+</tr>
+<tr>
+<td>第五步 三段式</td>
+<td>局部 scan → 总和 scan → 加回去</td>
+<td><code>three_phase_scan(big, 8)</code></td>
+<td>和 <code>np.cumsum</code> 一样</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">old = temp[:]                                  # 第一道栅栏后：全员先读旧值
+temp = [old[t] + (old[t - d] if t &gt;= d else 0)  # 第二道栅栏后：再写
+        for t in range(len(old))]
+
+local = np.cumsum(parts, axis=1)               # kernel ①：每个 block 局部 scan
+offsets = exclusive(local[:, -1])              # kernel ②：block 总和做 exclusive scan
+out = local + offsets[:, None]                 # kernel ③：加回前面 block 的总和
+</code></pre>
+<p><strong>代码里才看得到的 2 件事</strong>：</p>
+<ol>
+<li><strong><code>old = temp[:]</code> 就是"读完再写"</strong>：Hillis–Steele 要先把整行旧值拷一份再算新值；如果原地改，后面的线程会读到这一轮已经改过的数——讲义里第二道 <code>__syncthreads()</code> 防的就是这个。</li>
+<li><strong>加法次数按真正做了加法的线程数</strong>：Hillis–Steele 第 d 轮只有 t ≥ d 的线程在加，8 个数是 7 + 6 + 4 = 17 次。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把输入换成 16 个数，比较 Hillis–Steele 和 Blelloch 的加法次数，看差距怎么随 N 变大。</li>
+<li>把 <code>three_phase_scan</code> 的 block 大小换成 4、16。</li>
+</ul><nav class="pager"><a href="11-warp-shuffle-atomics.html">← 第 11 章 · warp shuffle 与原子操作：不经过 shared memory 交换数据</a><a href="13-sgemm-tiling.html">第 13 章 · SGEMM ①：从 naive 到 shared memory 分块 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 4 章 · 一个完整的 CUDA 程序：分配、拷贝、启动、同步、查错 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="4-cuda">第 4 章 · 一个完整的 CUDA 程序：分配、拷贝、启动、同步、查错</h1><p><a class="btn" href="../animations/04-host-device-timeline.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：kernel 写好了，CPU 端还要做哪些事才能让它跑起来？数据怎么进出显存？为什么 kernel 启动后 CPU 不等它就往下走？出错了去哪里看？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/03-warp-simt.html">第 3 章 warp 与 SIMT</a> · 下一章：<a href="../lessons/05-memory-hierarchy.html">第 5 章 GPU 内存层级</a><br />
+对应原文：PG §2.1.3.2 Explicit Memory Management（<code>materials/text/cuda-programming-guide.txt</code> 第 1877–1994 行）、§2.1.4 Synchronizing CPU and GPU（第 1995–2008 行）、§2.1.5 Putting it All Together（第 2009–2368 行）、§2.1.7 Error Checking（第 2369–2470 行）；Best Practices §10.1 Data Transfer（<code>text/cuda-c-best-practices-guide.txt</code> 第 1085–1336 行）；Oxford lec1 第 23–30 页、prac1</p>
+<p>本章缩写：H2D / D2H = Host to Device / Device to Host（主机到设备 / 设备到主机，拷贝方向）· PCIe = Peripheral Component Interconnect Express（外设 / 组件 / 互连 / 高速，CPU 和 GPU 之间的总线）· API = Application Programming Interface（应用 / 编程 / 接口）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-14">第一步：两块内存，中间一条窄路（2026-11-14）</h3>
+<p>CPU 和 GPU 各有各的内存：</p>
+<ul>
+<li><strong>host 内存</strong>：插在主板上的内存条，CPU 直接读写；</li>
+<li><strong>device 内存</strong>：GPU 显卡上的显存（HBM / GDDR），kernel 直接读写。</li>
+</ul>
+<p>两者之间靠 <strong>PCIe</strong>（或 NVLink-C2C 等）连接。这条路比两边的内存都窄得多：PCIe 5.0 x16 单方向约 64 GB/s，而 H100 显存带宽约 3.35 TB/s，差了 <strong>50 倍</strong>（〔旧知〕规格书数字）。</p>
+<p><strong>类比：工厂和仓库。</strong> CPU 是总部办公室，GPU 是城外的大工厂，显存是工厂自己的仓库。原料要先用卡车从总部运到工厂仓库（H2D），工厂加工完再把成品运回来（D2H）。卡车路很窄，所以：<strong>原料尽量一次运过去、在工厂里多加工几道，别来回跑。</strong></p>
+<p>（PG §2.1.3.1 还有一条省事的路：<strong>Unified Memory</strong>，<code>cudaMallocManaged</code> 分配一块两边都能用的内存，系统自动搬。入门方便，但想控制性能时要用下面的显式写法。）</p>
+<h3 id="2026-11-14_1">第二步：标准五步（2026-11-14）</h3>
+<p>PG §2.1.3.2 的完整例子，压缩成五步：</p>
+<pre><code class="language-cpp">// ① 分配：host 用 cudaMallocHost（锁页内存，拷贝更快），device 用 cudaMalloc
+float *A, *devA, *devB, *devC;
+cudaMallocHost(&amp;A, n * sizeof(float));
+cudaMalloc(&amp;devA, n * sizeof(float));
+// ... devB、devC 同理
+
+// ② 拷进去：H2D
+cudaMemcpy(devA, A, n * sizeof(float), cudaMemcpyDefault);
+
+// ③ 启动 kernel（第 1 章的配方）
+int threads = 256;
+int blocks  = cuda::ceil_div(n, threads);      // 就是 (n + 255) / 256
+vecAdd&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(devA, devB, devC, n);
+
+// ④ 等 GPU 做完，再拷回来：D2H
+cudaDeviceSynchronize();
+cudaMemcpy(C, devC, n * sizeof(float), cudaMemcpyDefault);
+
+// ⑤ 释放
+cudaFree(devA); cudaFreeHost(A);
+</code></pre>
+<p>几个要点：</p>
+<ul>
+<li><strong><code>devA</code> 是显存地址，CPU 不能直接 <code>devA[0]</code> 去读</strong>，只能通过 <code>cudaMemcpy</code> 搬回来再读。kernel 里也不能读 host 的普通指针。</li>
+<li><code>cudaMemcpyDefault</code> 让运行时根据指针自己判断方向（统一虚拟地址下可用）；老代码写 <code>cudaMemcpyHostToDevice</code> / <code>cudaMemcpyDeviceToHost</code>，意思一样。</li>
+<li><strong><code>cudaMallocHost</code> 分配的是锁页内存（pinned memory）</strong>：操作系统保证这块内存不会被换出到磁盘，GPU 可以直接用 DMA 搬，比普通 <code>malloc</code> 的内存快，也是异步拷贝的前提（Best Practices §10.1.1；第 26 章 streams 会用到）。</li>
+</ul>
+<h3 id="kernel-2026-11-14">第三步：kernel 启动是"下单"，不是"等做完"（2026-11-14）</h3>
+<p>PG §2.1.4：<strong>kernel 启动对 CPU 来说是异步的</strong>。<code>vecAdd&lt;&lt;&lt;...&gt;&gt;&gt;(...)</code> 这一行只是把任务放进 GPU 的队列，CPU <strong>立刻</strong>往下执行，不等 GPU 算完。</p>
+<p><strong>类比：外卖下单。</strong> 你点完单（启动 kernel）可以继续干别的；想吃的时候（要用结果时）得等外卖到了（同步）。</p>
+<p>所以：</p>
+<ul>
+<li><code>cudaDeviceSynchronize()</code>：CPU 停下来，<strong>等 GPU 上之前所有的活都做完</strong>；</li>
+<li><code>cudaMemcpy</code>（不带 Async 的版本）本身会等前面的 kernel 做完再拷，所以上面第 ④ 步严格来说不写 <code>cudaDeviceSynchronize()</code> 也能得到正确结果；但 PG 的例子里显式写了，读代码的人一眼能看出"这里要等"；</li>
+<li><strong>用 CPU 计时器测 kernel 时间，一定要先同步</strong>，否则测到的只是"下单花了多久"（几微秒），不是 kernel 真正的耗时。第 9 章讲正确计时。</li>
+</ul>
+<h3 id="2026-11-14_2">第四步：查错——错误会"晚到"（2026-11-14）</h3>
+<p>PG §2.1.7：每个 CUDA API 都返回 <code>cudaError_t</code>，成功是 <code>cudaSuccess</code>。常用宏：</p>
+<pre><code class="language-cpp">#define CUDA_CHECK(x) do { cudaError_t e = (x); if (e != cudaSuccess) {      \
+    fprintf(stderr, &quot;%s:%d: %s\n&quot;, __FILE__, __LINE__, cudaGetErrorString(e)); \
+    exit(1); } } while (0)
+
+CUDA_CHECK(cudaMalloc(&amp;devA, bytes));
+</code></pre>
+<p>两个坑：</p>
+<ol>
+<li><strong><code>&lt;&lt;&lt; &gt;&gt;&gt;</code> 启动不返回错误码。</strong> 启动后要立刻调 <code>cudaGetLastError()</code> 查一次。PG 原话：这时查到 <code>cudaSuccess</code> <strong>不代表 kernel 跑成功了，甚至不代表它开始跑了</strong>，只说明启动参数没问题（比如 block 超过 1024 个线程就会在这里报错）。</li>
+<li><strong>kernel 运行中的错误（如越界访问）是异步报告的</strong>，会在之后<strong>某个</strong>同步点的返回值里冒出来，看起来像是"下一个无关的 API 出错了"。调试时可以在每个 kernel 后加 <code>cudaDeviceSynchronize()</code> 再查错，把错误定位到具体 kernel。</li>
+</ol>
+<pre><code class="language-cpp">vecAdd&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(devA, devB, devC, n);
+CUDA_CHECK(cudaGetLastError());        // 查启动参数错误
+CUDA_CHECK(cudaDeviceSynchronize());   // 调试时：查 kernel 运行中的错误
+</code></pre>
+<p>越界这类错误更好的查法是 <strong>compute-sanitizer</strong>（<code>compute-sanitizer ./my_prog</code>），它会直接告诉你哪个 kernel、哪个线程、哪个地址越界（04 调研 §1.6）。</p>
+<h3 id="kernel-2026-11-14_1">第五步：算一笔账——小 kernel 不值得搬（2026-11-14）</h3>
+<p>向量加法，n = 1 亿个 float（400 MB 一个数组）：</p>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>搬多少</th>
+<th>带宽</th>
+<th>耗时</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H2D 拷 A、B</td>
+<td>800 MB</td>
+<td>PCIe 5.0 约 64 GB/s</td>
+<td>≈ 12.5 ms</td>
+</tr>
+<tr>
+<td>kernel：读 A、B，写 C</td>
+<td>1200 MB</td>
+<td>显存约 3.35 TB/s</td>
+<td>≈ 0.36 ms</td>
+</tr>
+<tr>
+<td>D2H 拷 C</td>
+<td>400 MB</td>
+<td>约 64 GB/s</td>
+<td>≈ 6.3 ms</td>
+</tr>
+</tbody>
+</table>
+<p>kernel 本身不到 0.4 ms，搬运要将近 19 ms。<strong>只为做一次加法把数据搬上 GPU，得不偿失。</strong> 真实的 AI 程序里，模型权重和激活一直留在显存里，几百个 kernel 接力处理，只有输入和最终结果才走 PCIe——这就是第一步说的"别来回跑"。</p>
+<h3 id="cpu-gpu">动画演示：CPU 和 GPU 的时间线</h3>
+<p><img alt="host 与 device 的时间线" src="../animations/04-host-device-timeline.gif" /></p>
+<p>可交互版：<a href="../animations/04-host-device-timeline.html">animations/04-host-device-timeline.html</a>。开关：<strong>kernel 后面有没有同步</strong>、<strong>用 CPU 计时器测 kernel</strong>。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>上面一行是 CPU，下面一行是 GPU，中间是 PCIe 拷贝；</li>
+<li>启动 kernel 时，CPU 那一行只占一小格就继续往下走，GPU 那一行才开始干活；</li>
+<li>打开"CPU 计时"，看不同步时测到的时间有多离谱；</li>
+<li>关掉同步，看 D2H 拷贝怎么自动等 kernel 做完。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：按顺序写出一个 CUDA 程序把数组 A、B 加成 C 需要的五步，每步写出用到的 API 名字。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：下面这段计时代码测到的是什么？为什么几乎总是几微秒？怎么改才能测到 kernel 的真实耗时？</p>
+<pre><code class="language-cpp">auto t0 = now();
+myKernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(...);
+auto t1 = now();
+printf(&quot;%f ms\n&quot;, t1 - t0);
+</code></pre>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：一个 kernel 里有越界写。程序在 kernel 后面没有查错，三行之后的 <code>cudaMemcpy</code> 返回了错误。为什么错误出现在 <code>cudaMemcpy</code> 而不是 kernel 那一行？你会怎么把错误定位到具体是哪个 kernel？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>两个仓库一条窄路：能不搬就不搬，搬了就多干几道；<br />
+五步走：分配、拷进、启动、同步、拷回（最后释放）；<br />
+启动是下单不是等饭，要结果先同步，计时也先同步；<br />
+尖括号不报错，启动后查 <code>cudaGetLastError</code>；kernel 里的错会晚到，查不清就上 compute-sanitizer。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C09（标准五步与对应 API：<code>cudaMalloc</code> / <code>cudaMemcpy</code> / <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> / <code>cudaDeviceSynchronize</code> / <code>cudaFree</code>）</li>
+<li>C10（kernel 启动是异步的；错误异步报告；<code>cudaGetLastError</code> 只能查到启动参数错误）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §2.1.3–2.1.5</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 1799–2368 行</td>
+<td>Unified Memory 与显式管理两种写法、同步、完整示例</td>
+</tr>
+<tr>
+<td>★ PG §2.1.7</td>
+<td>第 2369–2470 行</td>
+<td><code>CUDA_CHECK</code> 宏、错误状态、异步错误</td>
+</tr>
+<tr>
+<td>Best Practices §10.1</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 1085–1336 行</td>
+<td>锁页内存、异步拷贝与计算重叠、零拷贝</td>
+</tr>
+<tr>
+<td>Oxford prac1</td>
+<td><code>courses/oxford-cuda-giles/prac1/</code></td>
+<td>第一个能编译运行的完整程序（需要 NVIDIA GPU）</td>
+</tr>
+<tr>
+<td>Accelerated Computing Hub「CUDA C++ Tutorial」</td>
+<td>前几节</td>
+<td>官方练习，T4 即可（见 04 调研 §1.3）</td>
+</tr>
+<tr>
+<td>PG §2.2 Intro to CUDA Python</td>
+<td>第 2600 行起</td>
+<td>同样五步的 Python 写法（<code>cuda.core</code> / Numba），想用 Python 当 host 时看</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>搬运时间</strong> ≈ 字节数 ÷ 带宽 + 固定开销（每次 <code>cudaMemcpy</code> 约几微秒）。小块拷贝时固定开销占主导，所以要合并成大块拷。</li>
+<li><strong>值不值得上 GPU</strong>：粗估 <span class="arithmatex">\(t_{\text{GPU}} = t_{\text{H2D}} + t_{\text{kernel}} + t_{\text{D2H}}\)</span>，和 CPU 耗时比。计算量相对数据量越大（算术强度越高，第 9 章），越值得。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>分配 / 释放显存</td>
+<td><code>cudaMalloc(&amp;p, bytes)</code> / <code>cudaFree(p)</code></td>
+</tr>
+<tr>
+<td>锁页 host 内存</td>
+<td><code>cudaMallocHost(&amp;p, bytes)</code> / <code>cudaFreeHost(p)</code></td>
+</tr>
+<tr>
+<td>拷贝</td>
+<td><code>cudaMemcpy(dst, src, bytes, cudaMemcpyDefault)</code></td>
+</tr>
+<tr>
+<td>清零</td>
+<td><code>cudaMemset(p, 0, bytes)</code></td>
+</tr>
+<tr>
+<td>等 GPU</td>
+<td><code>cudaDeviceSynchronize()</code></td>
+</tr>
+<tr>
+<td>查错</td>
+<td><code>cudaGetLastError()</code>（读后清零）、<code>cudaPeekAtLastError()</code>（只读）、<code>cudaGetErrorString(e)</code></td>
+</tr>
+<tr>
+<td>向上取整</td>
+<td><code>cuda::ceil_div(n, threads)</code>（CCCL）或 <code>(n + threads - 1) / threads</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch04_host_device.py</code>，配套测试 <code>tests/test_ch01_06.py</code>；同一章的 notebook：<code>notebooks/ch04_host_device.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真正的 <code>cudaMalloc</code> / <code>cudaMemcpy</code> 要 NVIDIA GPU [GPU]，这里用一个玩具类 <code>FakeGPU</code> 模拟它们的规则）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch04_host_device.py   # 一步一步打印  
+uv run pytest tests/test_ch01_06.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二步 五步走</td>
+<td>分配、拷进、启动、同步、拷回</td>
+<td><code>gpu.malloc</code> → <code>memcpy_h2d</code> → <code>launch</code> → <code>memcpy_d2h</code></td>
+<td>C = [1, 2, …, 8]</td>
+</tr>
+<tr>
+<td>第三步 启动是下单</td>
+<td>异步启动</td>
+<td><code>launch</code> 只把 kernel 放进 <code>queue</code></td>
+<td>刚启动完 C 全是 0</td>
+</tr>
+<tr>
+<td>第四步 错误会晚到</td>
+<td><code>cudaGetLastError</code></td>
+<td><code>launch(bad_kernel)</code> 返回 <code>cudaSuccess</code>，<code>synchronize()</code> 才报错</td>
+<td><code>cudaErrorIllegalAddress</code></td>
+</tr>
+<tr>
+<td>第五步 搬运账</td>
+<td>字节 ÷ 带宽</td>
+<td><code>transfer_ms(800, 64)</code> 等</td>
+<td>12.50、0.36、6.25 ms，合计 ≈ 19.1 ms</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">def launch(self, kernel, *args):        # kernel&lt;&lt;&lt;...&gt;&gt;&gt;：只入队，立刻返回
+    self.queue.append((kernel, args))
+    return &quot;cudaSuccess&quot;                  # 启动参数没问题 ≠ kernel 跑成功
+
+def synchronize(self):                    # 真正执行，运行中的错误这时才冒出来
+    for kernel, args in self.queue: ...
+
+def memcpy_d2h(self, name):               # 拷回之前先等前面的 kernel
+    err = self.synchronize()
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>FakeGPU.mem</code> 是一个字典，CPU 端只能通过 <code>memcpy_*</code> 拿数据</strong>：对应讲义说的"<code>devA</code> 是显存地址，CPU 不能直接 <code>devA[0]</code>"。</li>
+<li><strong><code>memcpy_d2h</code> 里先调了 <code>synchronize()</code></strong>：这就是"不带 Async 的 <code>cudaMemcpy</code> 会等前面的 kernel 做完"。</li>
+<li><strong>D2H 算出来是 6.25 ms</strong>：讲义表里写 ≈ 6.3 ms 是四舍五入到一位小数，测试按 6.25 核对。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把第五步的 PCIe 带宽从 64 GB/s 改成 NVLink-C2C 的量级（比如 450），看搬运和 kernel 的比例怎么变。</li>
+<li>在 <code>bad_kernel</code> 后面再 <code>launch</code> 一个正常的 <code>vec_add_kernel</code>，看错误是在哪一次 <code>synchronize()</code> 冒出来的。</li>
+</ul><nav class="pager"><a href="03-warp-simt.html">← 第 3 章 · warp 与 SIMT：32 个线程一起走，分岔了怎么办</a><a href="05-memory-hierarchy.html">第 5 章 · GPU 内存层级：寄存器、shared memory、L1 / L2、显存 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

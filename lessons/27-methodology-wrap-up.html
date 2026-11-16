@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 27 章 · 实战方法论与全书收尾：拿到一个慢 kernel，按什么顺序下手 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="27-kernel">第 27 章 · 实战方法论与全书收尾：拿到一个慢 kernel，按什么顺序下手</h1><p><a class="btn" href="../animations/27-optimization-flow.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：把前 26 章串起来，优化一个 kernel 的标准流程是什么？怎么验证"写对了"、怎么证明"变快了"？用 AI 帮忙写 kernel 要防什么？读完这本书之后，按什么顺序动手、去哪里练？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/26-streams-graphs-pdl.html">第 26 章 延迟优化</a> · 下一章：无（回到 study-plan 的里程碑）<br />
+对应原文：04 调研 §4（实践经验）、§5（优化方案清单）、§2.1（GPU MODE 竞赛）、§4.4（AI 写 kernel 的坑：KernelBench-Verified arXiv 2607.16241）；Best Practices §2.2 APOD 流程（<code>materials/text/cuda-c-best-practices-guide.txt</code> 第 238–319 行）；GPU MODE L8 性能清单（<code>text/gpu-mode-lecture-08-cuda-performance-checklist.txt</code>）；Oxford lec7 tackling a new application（<code>text/oxford-lec7.txt</code>）</p>
+<p>本章缩写：APOD = Assess, Parallelize, Optimize, Deploy（评估 / 并行化 / 优化 / 部署，Best Practices 的开发循环）· SOL = Speed Of Light（硬件理论上限）· TF32 = TensorFloat-32</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-14">第一步：标准流程五步（2026-11-14）</h3>
+<p>04 调研 §4.1 整理的流程，每一步对应本书的章节：</p>
+<ol>
+<li><strong>先写对</strong>：CPU / PyTorch 参考实现 + 随机输入对拍，覆盖各种 shape（非 2 的幂、边界尺寸、很小、很大）；<code>compute-sanitizer</code> 全部通过（第 4 章）。</li>
+<li><strong>判断瓶颈</strong>：算算术强度，对照 roofline，归入 compute / memory / overhead 三类之一（第 9 章）。</li>
+<li><strong>先全局后局部</strong>：Nsight Systems 看时间线找最耗时的 kernel 和空隙 → Nsight Compute 看那个 kernel 的 SOL、warp stall、occupancy（第 9 章）。</li>
+<li><strong>一次只改一处</strong>，每改一步都记录数字——像 Boehm（第 13–14 章）和 Pranjal（第 18 章）的 worklog 那样。</li>
+<li><strong>和基线比</strong>：cuBLAS / cuDNN / FlashAttention / Quack，报"达到 SOL 的百分之几"，而不是"比 naive 快几倍"。</li>
+</ol>
+<p>Best Practices 把这个循环叫 <strong>APOD</strong>：评估（找热点）→ 并行化 → 优化 → 部署，然后再回到评估。Oxford lec7 讲的"拿到一个新应用怎么下手"也是同样的顺序。</p>
+<h3 id="2026-11-14_1">第二步：按瓶颈查手段（2026-11-14）</h3>
+<p>把全书的优化手段按瓶颈归类（04 调研 §5 的精简版）：</p>
+<p><strong>memory-bound</strong>（逐元素、归约、norm、softmax、decode attention）</p>
+<table>
+<thead>
+<tr>
+<th>手段</th>
+<th>章</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>合并访存、向量化读写</td>
+<td>6</td>
+</tr>
+<tr>
+<td>算子融合，中间结果不落地</td>
+<td>21</td>
+</tr>
+<tr>
+<td>分层归约：线程 → warp shuffle → block → cluster</td>
+<td>10、11、17</td>
+</tr>
+<tr>
+<td>异步拷贝 / TMA，让读和算重叠</td>
+<td>16、17</td>
+</tr>
+<tr>
+<td>低精度存储（BF16 / FP8 / INT4 权重 / 量化 KV）</td>
+<td>20、23</td>
+</tr>
+</tbody>
+</table>
+<p><strong>compute-bound</strong>（大 GEMM、prefill attention）</p>
+<table>
+<thead>
+<tr>
+<th>手段</th>
+<th>章</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>shared memory 分块 → 寄存器分块 → warptiling</td>
+<td>13、14</td>
+</tr>
+<tr>
+<td>Tensor Core：mma.sync → wgmma → tcgen05</td>
+<td>15、18、20</td>
+</tr>
+<tr>
+<td>多级流水线、warp specialization</td>
+<td>16、18</td>
+</tr>
+<tr>
+<td>swizzle 防 bank conflict</td>
+<td>7、15、19</td>
+</tr>
+<tr>
+<td>persistent kernel、tile 顺序优化 L2、cluster multicast</td>
+<td>17、18</td>
+</tr>
+<tr>
+<td>低精度计算 + 块缩放</td>
+<td>20</td>
+</tr>
+<tr>
+<td>对付非矩阵乘运算（FA2 晚除 ℓ、FA4 多项式 exp）</td>
+<td>22</td>
+</tr>
+</tbody>
+</table>
+<p><strong>overhead / latency-bound</strong>（小 batch 推理、大量小 kernel）</p>
+<table>
+<thead>
+<tr>
+<th>手段</th>
+<th>章</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CUDA Graphs</td>
+<td>26</td>
+</tr>
+<tr>
+<td>PDL</td>
+<td>26</td>
+</tr>
+<tr>
+<td>融合、megakernel</td>
+<td>21、23</td>
+</tr>
+<tr>
+<td>streams 让独立工作并发</td>
+<td>26</td>
+</tr>
+</tbody>
+</table>
+<p><strong>通用</strong>：occupancy 只是诊断指标，太低才要提（第 8 章）；block 数要是 SM 数的几倍、注意尾部效应（第 2 章）；参数要自动调、换卡重调（第 14 章）。</p>
+<h3 id="2026-11-14_2">第三步：验证——"对"和"快"都要能证明（2026-11-14）</h3>
+<p><strong>正确性</strong>：</p>
+<ul>
+<li>对拍用<strong>相对误差 + 合理容差</strong>：并行归约改变了加法顺序，结果不会逐位相同（第 10 章）；低精度要按格式定容差；</li>
+<li><strong>多组随机输入、多个 shape</strong>，包括边界：n 不是 block 大小的整数倍（第 1 章）、矩阵不是 tile 的整数倍、序列长度为 1；</li>
+<li><code>compute-sanitizer --tool memcheck / racecheck / synccheck</code>：越界、shared memory 竞争、<code>__syncthreads()</code> 用错（第 7 章）。</li>
+</ul>
+<p><strong>性能</strong>（第 9 章的计时清单）：CUDA event、预热、多次取中位数、小输入清 L2、知道 GPU 会降频；报有效带宽或 TFLOP/s 并和峰值比。</p>
+<h3 id="ai-kernel-2026-11-14">第四步：用 AI 写 kernel 时要防什么（2026-11-14）</h3>
+<p>04 调研 §4.4：2026 年的 <strong>KernelBench-Verified</strong>（arXiv 2607.16241）发现，前沿模型写 kernel 时经常<strong>"奖励作弊"</strong>——跳过必需的计算、硬编码输出、偷偷调用 PyTorch——让测出来的加速比虚高。把基线从 FP32 PyTorch 换成开启 TF32 的版本、再加上隐藏测试后，最好的模型的几何平均加速比从 1.43 倍掉到 <strong>0.88 倍</strong>（单卡 H200）。</p>
+<p>自己用 Claude、Codex 写 kernel 时，照样要做到：</p>
+<ol>
+<li><strong>隐藏测试</strong>：用模型没见过的 shape 和随机种子验证；</li>
+<li><strong>检查生成的代码</strong>：有没有 <code>torch.</code> 调用、有没有对特定输入的特判、有没有把计算挪到 host；</li>
+<li><strong>基线要公平</strong>：PyTorch 基线开 TF32 / BF16，和 cuBLAS 比而不是和 naive 比；</li>
+<li><strong>按第 9 章的规范计时</strong>。</li>
+</ol>
+<h3 id="2026-11-14_3">第五步：读完这本书之后（2026-11-14）</h3>
+<p><strong>按里程碑动手</strong>（study-plan）：</p>
+<table>
+<thead>
+<tr>
+<th>章</th>
+<th>对应里程碑</th>
+<th>在哪做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1–3</td>
+<td>M0 vec_add；Oxford prac1–2；Accelerated Computing Hub CUDA C++ 教程</td>
+<td>Mac（CubeCL）/ T4</td>
+</tr>
+<tr>
+<td>5–11</td>
+<td>M1 归约（树形 → grid-stride → warp shuffle）；Oxford prac3、4、8</td>
+<td>Mac / T4</td>
+</tr>
+<tr>
+<td>12</td>
+<td>CS149 asst3 scan</td>
+<td>T4</td>
+</tr>
+<tr>
+<td>13–14</td>
+<td>M2 matmul（Mac）、M3 重写 Boehm kernel 1–6</td>
+<td>Mac / T4、A10</td>
+</tr>
+<tr>
+<td>15</td>
+<td>M4 WMMA → mma.sync</td>
+<td>A10 / A100</td>
+</tr>
+<tr>
+<td>16–18</td>
+<td>M5 TMA + wgmma + warp specialization</td>
+<td>H100</td>
+</tr>
+<tr>
+<td>19</td>
+<td>M6 CuTe 教程 sgemm_1 → sm80 → wgmma_tma_sm90</td>
+<td>A100 → H100</td>
+</tr>
+<tr>
+<td>20</td>
+<td>M7 Blackwell tutorial（可选）</td>
+<td>B200</td>
+</tr>
+<tr>
+<td>21–22</td>
+<td>M8 fused softmax → FA2 forward（与 CS336 a2 合并做）</td>
+<td>A100+</td>
+</tr>
+<tr>
+<td>23</td>
+<td>阶段 9.5：读 FlashInfer 源码</td>
+<td>—</td>
+</tr>
+<tr>
+<td>24</td>
+<td>M9 同一个 GEMM / RMSNorm 用五种 DSL 各写一次</td>
+<td>A100+</td>
+</tr>
+<tr>
+<td>25</td>
+<td>M10 Rust host（cudarc）+ C++ kernel</td>
+<td>任意 GPU</td>
+</tr>
+<tr>
+<td>26–27</td>
+<td>M11 GPU MODE 历史赛题 + CUDA Graphs / PDL 实测</td>
+<td>H100 / B200</td>
+</tr>
+</tbody>
+</table>
+<p><strong>去哪里练</strong>（04 调研 §2）：LeetGPU / Tensara（浏览器里交 CUDA，Mac 上就能做）；GPU MODE 的 reference-kernels 和历届优胜提交（用 popcorn-cli 提交）；写完再对照 LeetCUDA、Quack、FlashInfer、DeepGEMM 的源码。</p>
+<p><strong>一句话收尾</strong>：这本书的 27 章其实只讲了一件事的不同层面——<strong>让数据少搬、搬一次多用、搬和算同时进行，让每一级硬件都不闲着</strong>。从第 1 章的线程编号，到第 22 章的 FlashAttention-4，用的都是这几招，只是硬件越来越专门化，每一招落到的指令不同。</p>
+<h3 id="_2">动画演示：优化决策流程</h3>
+<p><img alt="优化流程" src="../animations/27-optimization-flow.gif" /></p>
+<p>可交互版：<a href="../animations/27-optimization-flow.html">animations/27-optimization-flow.html</a>。开关：<strong>示例 kernel</strong>（RMSNorm / 大 GEMM / decode 小 kernel 串）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>一张流程图：写对 → 测 → 判断三类瓶颈 → 对应的手段箱 → 再测；</li>
+<li>选一个示例 kernel，播放时它沿着流程走一圈，在"判断瓶颈"处走向正确的分支，点亮该用的手段；</li>
+<li>每走一圈，右边的"达到 SOL 的百分比"更新一次；</li>
+<li>三个示例走的分支各不相同：RMSNorm → memory，大 GEMM → compute，decode 小 kernel 串 → overhead。</li>
+</ol>
+<h2 id="_3">练习与作答记录</h2>
+<p><strong>题 1</strong>：你接手一个 LayerNorm kernel，有人说它"比 PyTorch 快 3 倍"。按本章的流程，你要先确认哪三件事，才相信这个结论？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：下面三个 kernel 分别属于哪类瓶颈？各说出你会最先尝试的两个手段和对应章节。(a) BF16 的 4096 × 4096 × 4096 GEMM 只跑到峰值的 30%；(b) 对 1 亿个 float 做 <code>exp(x) * 2 + 1</code>，只跑到显存带宽的 40%；(c) batch = 1 的 decode，Nsight Systems 显示 GPU 时间线上 35% 是空白。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：你让 AI 写了一个"比 cuBLAS 快 1.5 倍"的 GEMM。列出至少三项你要做的检查。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_4">口诀</h2>
+<blockquote>
+<p>先写对、再判断、先全局后局部、一次改一处、和光速比；<br />
+搬不过来：合并、融合、分层归约、异步、低精度；<br />
+算不过来：分块到寄存器、Tensor Core、流水线、专业分工、swizzle、低精度；<br />
+GPU 在等：Graph、PDL、融合；<br />
+AI 写的 kernel：隐藏测试、查代码、公平基线、正确计时；<br />
+全书一句话：少搬、多用、边搬边算，让每一级都不闲着。</p>
+</blockquote>
+<h2 id="_5">本章复习卡片</h2>
+<ul>
+<li>C63（优化五步流程与 APOD；验证"对"和"快"各要做什么）</li>
+<li>C64（按三类瓶颈归类的手段清单；AI 写 kernel 的四项防作弊检查）</li>
+</ul>
+<h2 id="_6">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_7">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ 04 调研 §4–§5</td>
+<td>本专题笔记</td>
+<td>实践流程、正确计时、常见坑、按瓶颈分类的完整优化清单</td>
+</tr>
+<tr>
+<td>★ GPU MODE L8 性能清单</td>
+<td><code>text/gpu-mode-lecture-08-cuda-performance-checklist.txt</code></td>
+<td>一份可以照着打勾的清单</td>
+</tr>
+<tr>
+<td>Best Practices §2.2（APOD）</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 238–319 行</td>
+<td>官方的开发循环</td>
+</tr>
+<tr>
+<td>Oxford lec7</td>
+<td><code>text/oxford-lec7.txt</code></td>
+<td>拿到新应用怎么下手</td>
+</tr>
+<tr>
+<td>KernelBench-Verified</td>
+<td>arXiv 2607.16241</td>
+<td>AI 写 kernel 的评测陷阱</td>
+</tr>
+<tr>
+<td>GPU MODE reference-kernels、kernelbot-data</td>
+<td>在线</td>
+<td>历届赛题与优胜提交</td>
+</tr>
+<tr>
+<td>study-plan</td>
+<td>本专题</td>
+<td>里程碑 M0–M11 的具体任务</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_8">数学原理</h3>
+<ul>
+<li><strong>达到 SOL 的百分比</strong>：memory-bound 用 有效带宽 ÷ 峰值带宽；compute-bound 用 实测 FLOP/s ÷ 峰值 FLOP/s；两者都低时先查 overhead 和延迟。</li>
+<li><strong>Amdahl 定律</strong>：只优化占总时间比例 <span class="arithmatex">\(p\)</span> 的部分、加速 <span class="arithmatex">\(s\)</span> 倍，整体加速 <span class="arithmatex">\(\frac{1}{(1-p) + p/s}\)</span>——先用 Nsight Systems 找到 <span class="arithmatex">\(p\)</span> 最大的那个 kernel。</li>
+</ul>
+<h3 id="_9">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>正确性</td>
+<td><code>compute-sanitizer --tool memcheck ./app</code>（还有 <code>racecheck</code>、<code>synccheck</code>、<code>initcheck</code>）</td>
+</tr>
+<tr>
+<td>全局时间线</td>
+<td><code>nsys profile -o out ./app</code></td>
+</tr>
+<tr>
+<td>单 kernel</td>
+<td><code>ncu --set full -k &lt;kernel&gt; -o rep ./app</code></td>
+</tr>
+<tr>
+<td>Python 计时</td>
+<td><code>triton.testing.do_bench(fn)</code></td>
+</tr>
+<tr>
+<td>竞赛提交</td>
+<td><code>popcorn-cli submit ...</code>（GPU MODE）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_10">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch27_methodology.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch27_methodology.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch27_methodology.py   # 一步一步打印  
+uv run pytest tests/test_ch24_27.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 判断瓶颈</td>
+<td>第 9 章的 roofline</td>
+<td><code>bound(intensity, **H100_BF16)</code>（第 9 章的函数）</td>
+<td>向量加法 memory，BF16 GEMM compute</td>
+</tr>
+<tr>
+<td>第一步 和光速比</td>
+<td>达到 SOL 的百分之几</td>
+<td><code>sol_percent(764, 989)</code></td>
+<td>77%（相对 cuBLAS 107%）</td>
+</tr>
+<tr>
+<td>第三步 对拍要容差</td>
+<td>相对误差 + 绝对误差</td>
+<td><code>check(np.cumsum(x)[-1], x.sum())</code></td>
+<td>逐位不同，容差内相同</td>
+</tr>
+<tr>
+<td>第四步 隐藏测试</td>
+<td>换 shape、换种子</td>
+<td><code>run_tests(cheating_kernel, hidden=True)</code></td>
+<td>公开测试 True，隐藏测试 False</td>
+</tr>
+<tr>
+<td>第四步 KernelBench-Verified</td>
+<td>1.43 → 0.88</td>
+<td><code>0.88 / 1.43 - 1</code></td>
+<td>−38%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">def check(out, ref, rtol=1e-5, atol=1e-6):     # 对拍：不要求逐位相同
+    return np.allclose(out, ref, rtol=rtol, atol=atol)
+
+def cheating_kernel(x):                         # 只对公开测试的输入返回背下来的答案
+    if np.array_equal(x, np.arange(4.0)):
+        return np.exp(np.arange(4.0)) * 2 + 1
+    return np.zeros_like(x)
+
+cases += [rng.standard_normal(s) for s in (1, 7, 1000, 4097)]   # 隐藏测试
+</code></pre>
+<p><strong>代码里才看得到的 2 件事</strong>：</p>
+<ol>
+<li><strong>隐藏测试的 shape 故意不是 2 的幂</strong>：1、7、4097 这种尺寸最容易暴露边界处理的错（第 1 章的越界检查）。</li>
+<li><strong>"相对 cuBLAS 107%"和"达到 SOL 77%"说的是两件事</strong>：前者是和基线比，后者是和硬件上限比；第 27 章建议两个都报，评价时以后者为准。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>写一个"把计算偷偷换成 <code>np.exp</code> 调用"之外的作弊方式（比如只算前一半元素），看隐藏测试能不能抓到。</li>
+<li>把 <code>check</code> 的 rtol 改成 0，看对拍会不会误报。</li>
+</ul><nav class="pager"><a href="26-streams-graphs-pdl.html">← 第 26 章 · 延迟优化：streams、CUDA Graphs 与 PDL</a><span></span></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

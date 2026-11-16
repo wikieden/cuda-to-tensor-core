@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 13 章 · SGEMM ①：从 naive 到 shared memory 分块 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="13-sgemm-1-naive-shared-memory">第 13 章 · SGEMM ①：从 naive 到 shared memory 分块</h1><p><a class="btn" href="../animations/13-gemm-tiling.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：矩阵乘法 C = A × B 最直接的 GPU 写法为什么只有峰值的 1%？只改"哪个线程算哪个元素"为什么能快 6 倍？shared memory 分块（tiling）怎么让每个数从显存读一次、用 32 次？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/12-scan.html">第 12 章 scan</a> · 下一章：<a href="../lessons/14-sgemm-register-tiling.html">第 14 章 SGEMM ②</a><br />
+对应原文：Boehm《How to Optimize a CUDA Matmul Kernel for cuBLAS-like Performance: a Worklog》Kernel 1–3（<code>materials/text/blog-boehm-cuda-matmul-worklog.txt</code> 第 20–62 行性能表、第 63–382 行）；Best Practices §10.2.3.2 Shared Memory in Matrix Multiplication（<code>text/cuda-c-best-practices-guide.txt</code> 第 1772–1936 行）；PMPP 第 5 版 ch.5（Memory architecture and data locality）</p>
+<p>本章缩写：SGEMM = Single-precision GEneral Matrix Multiply（单精度 / 通用 / 矩阵乘，<span class="arithmatex">\(C = \alpha AB + \beta C\)</span>）· GEMM = GEneral Matrix Multiply（通用矩阵乘）· cuBLAS = CUDA Basic Linear Algebra Subprograms（CUDA 基础线性代数子程序库）· BM / BN / BK = Block 在 M / N / K 方向上的 tile 大小</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="c-2026-11-14">第一步：一个线程算 C 的一个元素（2026-11-14）</h3>
+<p><span class="arithmatex">\(C\)</span> 是 <span class="arithmatex">\(M \times N\)</span>，<span class="arithmatex">\(A\)</span> 是 <span class="arithmatex">\(M \times K\)</span>，<span class="arithmatex">\(B\)</span> 是 <span class="arithmatex">\(K \times N\)</span>：</p>
+<div class="arithmatex">\[C_{xy} = \sum_{i=0}^{K-1} A_{xi} B_{iy}\]</div>
+<p>最直接的 GPU 写法（Boehm Kernel 1）：开 <span class="arithmatex">\(M \times N\)</span> 个线程，每个线程负责 C 的一个格子，自己跑一个长度 K 的循环做点积。</p>
+<pre><code class="language-cpp">const uint x = blockIdx.x * blockDim.x + threadIdx.x;   // 行
+const uint y = blockIdx.y * blockDim.y + threadIdx.y;   // 列
+if (x &lt; M &amp;&amp; y &lt; N) {
+    float tmp = 0.0;
+    for (int i = 0; i &lt; K; ++i)
+        tmp += A[x * K + i] * B[i * N + y];
+    C[x * N + y] = alpha * tmp + beta * C[x * N + y];
+}
+</code></pre>
+<p>Boehm 在 A6000 上测 4092 × 4092：<strong>309 GFLOP/s，是 cuBLAS 的 1.3%</strong>（cuBLAS 23250 GFLOP/s）。</p>
+<p><strong>慢在哪？</strong> 每做一次乘加（2 FLOP），要从显存读 A 的一个数和 B 的一个数（8 字节）——算术强度只有 0.25 FLOP/byte，远低于 A6000 的脊点（30 TFLOP/s ÷ 768 GB/s ≈ 39，第 9 章）。更糟的是，这 8 字节还不是合并读的。</p>
+<h3 id="kernel-2-6-2026-11-14">第二步：Kernel 2——换个映射，快 6 倍（2026-11-14）</h3>
+<p>Kernel 1 里 <code>threadIdx.x</code> 对应 C 的<strong>行</strong> x。一个 warp 是 32 个 <code>threadIdx.x</code> 连续的线程 → 它们是 C 的 32 个<strong>不同行</strong>，同一时刻读 <code>A[x * K + i]</code>——地址相差 K 个 float，<strong>每个线程一箱</strong>（第 6 章的最坏情况）。</p>
+<p>Boehm Kernel 2 只改了两行，让 warp 里连续的线程对应 C 同一行的连续列：</p>
+<pre><code class="language-cpp">const int x = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
+const int y = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
+</code></pre>
+<p>现在一个 warp 的 32 个线程：x 相同、y 连续。读 <code>A[x * K + i]</code>——<strong>32 个线程读同一个地址，广播</strong>；读 <code>B[i * N + y]</code>——连续地址，<strong>合并</strong>。</p>
+<p>结果：显存吞吐从 15 GB/s 涨到 110 GB/s，<strong>1987 GFLOP/s，8.5%</strong>。一行计算都没改，只改了"谁算哪个"。这就是第 6 章那句话的威力：<strong>让 <code>threadIdx.x</code> 对应内存里变化最快的那一维。</strong></p>
+<h3 id="2026-11-14">第三步：数据复用——同一个数被读了多少次（2026-11-14）</h3>
+<p>还是太慢。数一数显存读了多少：C 有 <span class="arithmatex">\(MN\)</span> 个元素，每个读 <span class="arithmatex">\(2K\)</span> 个数，一共 <span class="arithmatex">\(2MNK\)</span> 次读。可 A 和 B 加起来只有 <span class="arithmatex">\(MK + KN\)</span> 个数。<span class="arithmatex">\(M = N = K = 4096\)</span> 时：</p>
+<div class="arithmatex">\[\frac{2MNK}{MK + KN} = \frac{2 \times 4096^3}{2 \times 4096^2} = 4096\]</div>
+<p><strong>每个数平均被读了 4096 次。</strong> 虽然有 L1 / L2 缓存挡掉一部分，但大部分还是要走显存。</p>
+<p><strong>观察</strong>：C 的同一行的所有元素都要用 A 的同一行；C 的同一列都要用 B 的同一列。如果一个 block 负责 C 的一个 <span class="arithmatex">\(32 \times 32\)</span> 的小块，那这 1024 个线程需要的是 A 的 32 行和 B 的 32 列——<strong>同一块数据被 block 里的 32 个线程重复使用</strong>。把它搬进 shared memory，读一次显存，在片上用 32 次（第 5 章："读一次、用很多次"）。</p>
+<h3 id="kernel-3-k-tile2026-11-14">第四步：Kernel 3——沿 K 方向滑动的 tile（2026-11-14）</h3>
+<p>A 的 32 行有 K 列，一次放不进 shared memory。所以沿 K 方向<strong>分段</strong>，每段 BK = 32：</p>
+<pre><code>for (bk = 0; bk &lt; K; bk += 32) {
+    ① block 里 1024 个线程合作，把 A 的 32×32 小块、B 的 32×32 小块搬进 shared（每人搬各 1 个数，合并读）
+    ② __syncthreads()                          // 等搬完
+    ③ 每个线程用 shared 里的数做 32 次乘加：tmp += As[ty][k] * Bs[k][tx]
+    ④ __syncthreads()                          // 等大家算完，才能覆盖 shared 搬下一段
+}
+写回 C
+</code></pre>
+<p>Boehm 的核心代码：</p>
+<pre><code class="language-cpp">__shared__ float As[BLOCKSIZE * BLOCKSIZE];
+__shared__ float Bs[BLOCKSIZE * BLOCKSIZE];
+for (int bkIdx = 0; bkIdx &lt; K; bkIdx += BLOCKSIZE) {
+    As[threadRow * BLOCKSIZE + threadCol] = A[threadRow * K + threadCol];
+    Bs[threadRow * BLOCKSIZE + threadCol] = B[threadRow * N + threadCol];
+    __syncthreads();
+    A += BLOCKSIZE;  B += BLOCKSIZE * N;                     // 指针往 K 方向挪一段
+    for (int dotIdx = 0; dotIdx &lt; BLOCKSIZE; ++dotIdx)
+        tmp += As[threadRow * BLOCKSIZE + dotIdx] * Bs[dotIdx * BLOCKSIZE + threadCol];
+    __syncthreads();
+}
+</code></pre>
+<p><strong>算账</strong>：每一段，block 从显存读 <span class="arithmatex">\(2 \times 32 \times 32\)</span> 个数，做 <span class="arithmatex">\(32 \times 32 \times 32\)</span> 次乘加。每个从显存读的数被用了 <strong>32 次</strong>（tile 边长）。显存流量降到 Kernel 1 的 1/32。</p>
+<p>两个 <code>__syncthreads()</code> 正是第 7 章的两条铁律：② 是"写完再读"，④ 是"读完再覆盖"。</p>
+<p>shared memory 用量：<span class="arithmatex">\(2 \times 32 \times 32 \times 4 = 8\)</span> KB / block。</p>
+<p>Boehm 的表：<strong>2980 GFLOP/s，12.8%</strong>。（正文写的是约 2200，因为 Kernel 2 已经有不错的 L1 命中率，这一步提升有限；表格是更新后的数字。）</p>
+<h3 id="132026-11-14">第五步：为什么还只有 13%——下一章的问题（2026-11-14）</h3>
+<p>Kernel 3 的内循环：每次乘加要从 shared memory 读<strong>两个</strong>数（<code>As[...]</code> 和 <code>Bs[...]</code>）。shared memory 比显存快得多，但也不是免费的——现在瓶颈从显存挪到了 <strong>shared memory 带宽和访存指令数</strong>：每条 FMA 指令配两条 shared 读指令，计算单元有三分之二的时间在等数据。</p>
+<p>下一章的思路：<strong>让每个线程算 C 的不止一个元素</strong>，把 shared memory 里读出来的数放进寄存器，在寄存器里复用。这一招让性能从 13% 一路涨到 94%。</p>
+<table>
+<thead>
+<tr>
+<th>Kernel</th>
+<th>改动</th>
+<th>GFLOP/s（A6000）</th>
+<th>相对 cuBLAS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>naive</td>
+<td>309</td>
+<td>1.3%</td>
+</tr>
+<tr>
+<td>2</td>
+<td>合并访存</td>
+<td>1987</td>
+<td>8.5%</td>
+</tr>
+<tr>
+<td>3</td>
+<td>shared memory 分块</td>
+<td>2980</td>
+<td>12.8%</td>
+</tr>
+<tr>
+<td>4–10</td>
+<td>寄存器分块等（第 14 章）</td>
+<td>8475 → 21779</td>
+<td>36.5% → 93.7%</td>
+</tr>
+<tr>
+<td>cuBLAS</td>
+<td>—</td>
+<td>23250</td>
+<td>100%</td>
+</tr>
+</tbody>
+</table>
+<h3 id="shared-memory">动画演示：shared memory 分块怎么滑动</h3>
+<p><img alt="GEMM tiling" src="../animations/13-gemm-tiling.gif" /></p>
+<p>可交互版：<a href="../animations/13-gemm-tiling.html">animations/13-gemm-tiling.html</a>。开关：<strong>tile 大小</strong>（2 / 4）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>左边是 A，上边是 B，右下是 C（8 × 8，缩小版）；高亮的 C 小块是当前 block 负责的区域；</li>
+<li>每一帧，A 的一个横条 tile 和 B 的一个竖条 tile 被"搬进 shared"（闪一下），然后 C 小块里每个格子累加一次；</li>
+<li>tile 沿 K 方向滑动，K / tile 步后 C 小块算完；</li>
+<li>右边计数器：显存读了多少个数、shared 读了多少次、每个显存数被复用几次。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：Kernel 1 里一个 warp 读 <code>B[i * N + y]</code> 时，32 个线程的 y 是什么关系（提示：<code>threadIdx.x</code> 对应的是 x）？这次读合并吗？Kernel 2 里呢？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：Kernel 3 的 tile 边长从 32 改成 64（block 仍要求 tile 边长² 个线程），shared memory 每 block 用多少？每个显存数被复用几次？会碰到什么限制？（提示：block 最多 1024 个线程）</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：Kernel 3 的内循环每次从 <code>As[threadRow * 32 + dotIdx]</code> 和 <code>Bs[dotIdx * 32 + threadCol]</code> 读。在一个 warp 里（32 个线程 threadRow 相同、threadCol 连续），这两次读各会不会有 bank conflict？是广播还是无冲突？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>一人一格做点积：每算 2 次读 8 字节，1% 峰值；<br />
+threadIdx.x 对列：A 广播、B 合并，快 6 倍；<br />
+一个数被读几千次，搬进 shared 用 32 次；<br />
+搬、等、算、等：写完要等，读完再覆盖也要等；<br />
+瓶颈从显存挪到 shared，下一步搬进寄存器。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C30（SGEMM naive → 合并 → shared tiling 三步，各自解决什么问题，A6000 上 1.3% → 8.5% → 12.8%）</li>
+<li>C31（tiling 的复用：tile 边长 T 时每个显存数被用 T 次；循环里两个 <code>__syncthreads()</code> 的作用）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ Boehm worklog Kernel 1–3</td>
+<td><code>text/blog-boehm-cuda-matmul-worklog.txt</code> 第 63–382 行</td>
+<td>本章全部内容的原文，含 roofline 图和 Kernel 3 的 occupancy 计算</td>
+</tr>
+<tr>
+<td>★ Best Practices §10.2.3.2–10.2.3.3</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 1772–2040 行</td>
+<td>官方版 shared memory 矩阵乘，以及 <span class="arithmatex">\(C = AA^T\)</span> 的 bank conflict 处理</td>
+</tr>
+<tr>
+<td>PMPP 第 5 版 ch.5</td>
+<td>Memory architecture and data locality</td>
+<td>tiled matmul 的教科书推导</td>
+</tr>
+<tr>
+<td>cubecl-lab M2</td>
+<td><code>solutions/cubecl-lab/src/lib.rs</code> 的 matmul TODO</td>
+<td>在 Mac 上自己写 naive → tiled → 1D blocktiling</td>
+</tr>
+<tr>
+<td><code>code/sgemm-cuda/</code></td>
+<td>Boehm 的代码仓库</td>
+<td>M3 里程碑：只看博客文字自己重写，写完再对照</td>
+</tr>
+<tr>
+<td>flame/how-to-optimize-gemm</td>
+<td>在线</td>
+<td>CPU 上同样的分块思想</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>naive 的流量</strong>：每个 C 元素读 <span class="arithmatex">\(2K\)</span> 个数，总读取 <span class="arithmatex">\(2MNK\)</span> 个，复用度 <span class="arithmatex">\(\frac{2MNK}{MK + KN}\)</span>（方阵为 <span class="arithmatex">\(N\)</span>）。</li>
+<li><strong>tiling 的流量</strong>：block tile <span class="arithmatex">\(T \times T\)</span>，沿 K 每段读 <span class="arithmatex">\(2T^2\)</span> 个数、做 <span class="arithmatex">\(T^3\)</span> 次乘加。总读取 <span class="arithmatex">\(= \frac{MN}{T^2} \cdot \frac{K}{T} \cdot 2T^2 = \frac{2MNK}{T}\)</span>，是 naive 的 <span class="arithmatex">\(1/T\)</span>。算术强度（对显存）<span class="arithmatex">\(\approx \frac{2MNK}{4 \cdot 2MNK/T} = T/4\)</span> FLOP/byte（FP32）。<span class="arithmatex">\(T = 32\)</span> 时为 8，仍低于 A6000 的脊点 39——这也是 Kernel 3 还远不够的原因之一。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>合并映射（1D block）</td>
+<td><code>x = blockIdx.x*BS + threadIdx.x/BS; y = blockIdx.y*BS + threadIdx.x%BS;</code></td>
+</tr>
+<tr>
+<td>tile 循环骨架</td>
+<td><code>for (bk...) { load As, Bs; __syncthreads(); for (k...) tmp += As[..]*Bs[..]; __syncthreads(); }</code></td>
+</tr>
+<tr>
+<td>shared 用量</td>
+<td><span class="arithmatex">\(2 \cdot BM \cdot BK \cdot 4\)</span> 字节（方 tile：<span class="arithmatex">\(2T^2 \cdot 4\)</span>）</td>
+</tr>
+<tr>
+<td>GFLOP/s</td>
+<td><span class="arithmatex">\(2MNK / t / 10^9\)</span></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch13_sgemm_tiling.py</code>，配套测试 <code>tests/test_ch13_18.py</code>；同一章的 notebook：<code>notebooks/ch13_sgemm_tiling.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch13_sgemm_tiling.py   # 一步一步打印  
+uv run pytest tests/test_ch13_18.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 Kernel 1 的强度</td>
+<td>2 FLOP ÷ 8 字节</td>
+<td><code>2 / 8</code></td>
+<td>0.25，A6000 脊点 39</td>
+</tr>
+<tr>
+<td>第二步 Kernel 1 读 A</td>
+<td><code>x = threadIdx.x</code></td>
+<td><code>warp_read_sectors(x1, 0, 4096)</code>（第 6 章的 <code>sectors</code>）</td>
+<td>32 箱</td>
+</tr>
+<tr>
+<td>第二步 Kernel 2</td>
+<td><code>x = tx / 32</code>、<code>y = tx % 32</code></td>
+<td><code>warp_read_sectors(x2, 0, …)</code> / <code>warp_read_sectors(0, y2, …)</code></td>
+<td>读 A 1 箱（广播），读 B 4 箱（合并）</td>
+</tr>
+<tr>
+<td>第三步 每个数读几次</td>
+<td><span class="arithmatex">\(2MNK / (MK + KN)\)</span></td>
+<td><code>reuse_factor(4096, 4096, 4096)</code></td>
+<td>4096</td>
+</tr>
+<tr>
+<td>第四步 Kernel 3</td>
+<td>沿 K 每段 32</td>
+<td><code>tiled_gemm(A, B, 32)</code> vs <code>naive_gemm(A, B)</code></td>
+<td>结果一致，显存读少 32 倍；shared 8 KB</td>
+</tr>
+<tr>
+<td>第五步 Boehm 表</td>
+<td>÷ cuBLAS 23250</td>
+<td><code>BOEHM</code></td>
+<td>1.3%、8.5%、12.8%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">x1 = tx                                 # Kernel 1：threadIdx.x 对行
+x2, y2 = tx // 32, tx % 32              # Kernel 2：warp 里 x 相同、y 连续
+sectors((x * K + 0) * 4)                # 读 A[x * K + i] 落在几箱
+
+for bk in range(0, K, bs):              # Kernel 3：沿 K 滑动
+    As = A[bx:bx + bs, bk:bk + bs]      # ① 搬进 shared（每人搬 1 个）
+    Bs = B[bk:bk + bs, by:by + bs]
+    acc += As @ Bs                      # ③ 每个数在片上被用 bs 次
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>tiled_gemm</code> 里 <code>As @ Bs</code> 一行代表 block 里 1024 个线程的 32 次乘加</strong>：NumPy 一次算完，真正的 kernel 是每个线程做 <code>tmp += As[ty][k] * Bs[k][tx]</code>，循环 32 次。</li>
+<li><strong>显存读次数只数"从 A、B 读进来的数"</strong>：没有模拟 L1 / L2 缓存，所以 naive 的 524288 次是最坏情况；讲义说 Kernel 2 已经有不错的 L1 命中率，这也是 Kernel 3 实测只快 1.5 倍、不是 32 倍的原因。</li>
+<li><strong>64 × 64 是为了跑得快</strong>：讲义的 4096 × 4096 用 Python 双重循环要跑很久，比例关系（少 32 倍）不随尺寸变。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>tiled_gemm</code> 的 tile 换成 16、8，看显存读少几倍。</li>
+<li>把 <code>warp_read_sectors(x1, 0, 4096)</code> 的 K 换成 4、8，看 K 很小时 Kernel 1 读 A 还要几箱。</li>
+</ul><nav class="pager"><a href="12-scan.html">← 第 12 章 · 前缀和 scan：每个位置都要&quot;前面所有数的和&quot;</a><a href="14-sgemm-register-tiling.html">第 14 章 · SGEMM ②：寄存器分块、向量化与 warptiling →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

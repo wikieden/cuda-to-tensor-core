@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 11 章 · warp shuffle 与原子操作：不经过 shared memory 交换数据 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="11-warp-shuffle-shared-memory">第 11 章 · warp shuffle 与原子操作：不经过 shared memory 交换数据</h1><p><a class="btn" href="../animations/11-warp-shuffle.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：同一个 warp 的线程能不能直接看对方寄存器里的值？<code>__shfl_down_sync</code> 怎么用 5 步把 32 个数加起来？归约怎么分层（线程 → warp → block → 全局）？原子操作是什么，什么时候用、什么时候会很慢？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/10-reduction.html">第 10 章 归约</a> · 下一章：<a href="../lessons/12-scan.html">第 12 章 前缀和 scan</a><br />
+对应原文：Oxford lec4 第 2–6 页（<code>materials/text/oxford-lec4.txt</code> 第 13–161 行）、第 17–19 页（第 368–412 行，atomicAdd 与 atomicCAS 锁）；PG §5.4.6.5 Warp Shuffle Functions（<code>text/cuda-programming-guide.txt</code> 第 34656–34970 行）、§5.4.6.4 Warp Reduce Functions（第 34620–34655 行）、§2.3.5 Atomics（第 4274–4416 行）；Quack《Getting Memory-bound Kernels to Speed-of-Light》（在线）</p>
+<p>本章缩写：CAS = Compare-And-Swap（比较并交换）· lane（车道：线程在 warp 里的编号 0–31）· XOR = eXclusive OR（按位异或）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="shuffle-warp-2026-11-14">第一步：shuffle——同一个 warp 里直接递纸条（2026-11-14）</h3>
+<p>第 10 章的树形归约每一轮都要：写 shared memory → <code>__syncthreads()</code> → 读 shared memory。如果参与的线程都在<strong>同一个 warp</strong> 里，可以更快：<strong>warp shuffle</strong> 让一个线程直接读另一个 lane 寄存器里的值，不经过 shared memory，也不需要 block 级同步（PG §5.4.6.5："exchange a value……without the use of shared memory"）。</p>
+<p><strong>类比：同一排的同学直接递纸条</strong>，不用先放到讲台（shared memory）上再去拿。</p>
+<p>四种（Oxford lec4 第 2 页）：</p>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>从哪个 lane 拿</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__shfl_sync(mask, v, src)</code></td>
+<td>指定的 lane <code>src</code></td>
+<td>广播：大家都拿 lane 0 的值</td>
+</tr>
+<tr>
+<td><code>__shfl_up_sync(mask, v, d)</code></td>
+<td>lane − d（比自己小 d）</td>
+<td>前缀和（下一章）</td>
+</tr>
+<tr>
+<td><code>__shfl_down_sync(mask, v, d)</code></td>
+<td>lane + d（比自己大 d）</td>
+<td>归约</td>
+</tr>
+<tr>
+<td><code>__shfl_xor_sync(mask, v, m)</code></td>
+<td>lane XOR m</td>
+<td>蝴蝶归约，结果所有 lane 都有</td>
+</tr>
+</tbody>
+</table>
+<p>参数 <code>mask</code> 说明<strong>哪些 lane 参与</strong>，一般填 <code>0xffffffff</code>（32 个 1，全员）。名字里的 <code>_sync</code> 就是第 3 章说的：Volta 以后要显式说明谁和谁同步。Oxford 第 5 页的警告：<strong>只能读正在参与这次 shuffle 的 lane</strong>，目标 lane 不活跃时拿到的值是未定义的——写在 <code>if</code> 里时要特别小心。</p>
+<h3 id="5-32-2026-11-14">第二步：5 步加完 32 个数（2026-11-14）</h3>
+<pre><code class="language-cpp">float v = ...;                                    // 每个 lane 一个数
+for (int d = 16; d &gt; 0; d /= 2)
+    v += __shfl_down_sync(0xffffffff, v, d);      // 加上 lane + d 的值
+// 现在 lane 0 的 v 是 32 个数的和
+</code></pre>
+<p><strong>数字演示</strong>（缩成 8 个 lane，d 从 4 开始；值 <code>[3, 1, 4, 1, 5, 9, 2, 6]</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>步</th>
+<th>d</th>
+<th>lane 0–3 各加上谁</th>
+<th>lane 0–3 的值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>4</td>
+<td>lane t + lane t+4</td>
+<td>8, 10, 6, 7</td>
+</tr>
+<tr>
+<td>2</td>
+<td>2</td>
+<td>lane t + lane t+2</td>
+<td>14, 17, —</td>
+</tr>
+<tr>
+<td>3</td>
+<td>1</td>
+<td>lane 0 + lane 1</td>
+<td><strong>31</strong></td>
+</tr>
+</tbody>
+</table>
+<p>和第 10 章的"前一半加后一半"一模一样，只是<strong>数据在寄存器之间直接走</strong>。32 个 lane 要 <span class="arithmatex">\(\log_2 32 = 5\)</span> 步。（后面几步里 lane 4 以上也在算，只是算出来的值没人用，这不要紧——它们反正和 lane 0 在同一个 warp 里，在同一条指令里一起执行。）</p>
+<p>用 <code>__shfl_xor_sync</code> 的版本（Oxford 第 6 页方法 1）：<code>for (i = 1; i &lt; 32; i *= 2) v += __shfl_xor_sync(-1, v, i);</code>——每一步 lane 和"编号差一个二进制位"的伙伴互换相加，5 步后<strong>每个 lane 都拿到总和</strong>，省掉一次广播。</p>
+<p>CC 8.0 起还有现成的整数版：<code>__reduce_add_sync(mask, v)</code>（PG §5.4.6.4）；CCCL 里有 <code>cub::WarpReduce</code>。</p>
+<h3 id="2026-11-14">第三步：归约分层（2026-11-14）</h3>
+<p>把第 10 章和本章合起来，一个高效的 block 归约是这样分层的（Oxford 第 16 页的提示，也是 Quack 博客的模板）：</p>
+<ol>
+<li><strong>线程内</strong>：grid-stride 循环，在寄存器里顺序加很多个数（第 10 章）；</li>
+<li><strong>warp 内</strong>：5 次 shuffle，每个 warp 的 lane 0 拿到 warp 的和；</li>
+<li><strong>block 内</strong>：每个 warp 的 lane 0 写一个数到 <code>__shared__ float ws[32]</code>（最多 32 个 warp），<code>__syncthreads()</code>，再让第 0 个 warp 读这 32 个数、再做一次 5 步 shuffle；</li>
+<li><strong>全局</strong>：block 的 0 号线程 <code>atomicAdd</code> 到总和（或写部分和，再起一个 kernel）。</li>
+</ol>
+<p>和纯 shared memory 的树形归约比，<strong>8 轮里有 5 轮不碰 shared memory、不做 block 同步</strong>。Quack 博客还多一层：Hopper 的 thread block cluster 可以在几个 block 之间用分布式 shared memory 再归约一层（第 17 章）。</p>
+<h3 id="-2026-11-14">第四步：原子操作——"读-改-写"一次做完（2026-11-14）</h3>
+<p>多个线程同时做 <code>total += x</code>，普通写会出问题：两个线程都读到旧值 10，各加自己的数，各写回去——其中一个的加法丢了。PG §3.2.2.1 的 Note 也说过，同一 warp 多个线程普通写同一地址，留下谁的值是未定义的。</p>
+<p><strong>原子操作</strong>把"读、改、写"做成不可打断的一步，硬件保证不丢（PG §2.3.5）：</p>
+<pre><code class="language-cpp">atomicAdd(&amp;total, x);       // 还有 atomicMax / atomicMin / atomicExch / atomicCAS / atomicAnd ...
+</code></pre>
+<p><strong>数字演示</strong>：1000 个线程各 <code>atomicAdd(&amp;total, 1)</code>，结果一定是 1000；改成 <code>total += 1</code>，结果是 1 到 1000 之间不确定的某个数。</p>
+<p><strong>代价</strong>：同一个地址上的原子操作必须<strong>排队</strong>一个一个做。所以：</p>
+<ul>
+<li>✅ <strong>每个 block 一次</strong>原子加：几百上千次，很快；</li>
+<li>❌ <strong>每个线程一次</strong>原子加到同一个地址：1 亿次排队，很慢——这正是第三步要先在 warp、block 内归约的原因；</li>
+<li>地址分散的原子操作（比如直方图，第 12 章前后会碰到）冲突少，通常还行。</li>
+</ul>
+<p><strong>更通用的原子：CAS</strong>。<code>atomicCAS(addr, expected, desired)</code>：如果 <code>*addr == expected</code> 就改成 <code>desired</code>，返回旧值。用它可以拼出任何原子运算，甚至一把锁（Oxford lec4 第 19 页：<code>do {} while (atomicCAS(&amp;lock, 0, 1));</code>）。但 GPU 上用锁要非常小心——同一 warp 里一个线程拿着锁、另一个在等，老架构上会死锁（第 3 章的独立线程调度就是为了缓解这类问题）。</p>
+<h3 id="shuffle-down-shuffle-xor">动画演示：shuffle down 与 shuffle xor</h3>
+<p><img alt="warp shuffle 归约" src="../animations/11-warp-shuffle.gif" /></p>
+<p>可交互版：<a href="../animations/11-warp-shuffle.html">animations/11-warp-shuffle.html</a>。开关：<strong>shuffle 方式</strong>（down / xor）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>一排 8 个 lane（代表 32 个），每个格子里是这个 lane 寄存器里的值；</li>
+<li>每一步画出"谁从谁那里拿值"的箭头，然后格子里的数更新；</li>
+<li>down 方式最后只有 lane 0 是总和（金色）；xor 方式最后所有 lane 都是总和；</li>
+<li>下方计数：用了几次 shuffle、几次 shared memory 访问（0）、几次 block 同步（0）。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：写出用 <code>__shfl_down_sync</code> 求一个 warp 内 32 个数<strong>最大值</strong>的循环（伪代码即可）。最后哪个 lane 的结果是对的？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：一个 block 有 256 个线程，用"warp shuffle → shared memory → 第 0 个 warp 再 shuffle"的三层写法求和。shared memory 要开多大？一共要几次 <code>__syncthreads()</code>？和第 10 章纯 shared memory 的写法（8 轮，每轮一次同步）比少了几次？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：直方图：1 亿个 0–255 的整数，统计每个值出现多少次。直接让每个线程 <code>atomicAdd(&amp;hist[x], 1)</code> 到显存里的 <code>hist</code>，可能会慢在哪里？你能想到什么改进？（提示：shared memory）</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>同一个 warp 直接递纸条，不过讲台、不用全班等；<br />
+down 往大号拿，up 往小号拿，xor 找二进制伙伴，sync 指名道姓；<br />
+32 个数 5 步加完：16、8、4、2、1；<br />
+归约四层：线程里多加，warp 里 shuffle，block 里 shared，全局原子加；<br />
+原子不丢账但要排队：一个 block 一次可以，一个线程一次太慢。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C25（四种 shuffle 及用途；<code>mask</code> 与 <code>_sync</code> 的意思；5 步 warp 归约代码）</li>
+<li>C26（归约四层结构：线程内 → warp shuffle → block shared → 全局原子）</li>
+<li>C27（原子操作：读改写不可分、同地址排队；每 block 一次 vs 每线程一次）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ Oxford lec4 第 2–6 页</td>
+<td><code>text/oxford-lec4.txt</code> 第 13–161 行</td>
+<td>四种 shuffle、参与者规则、两种 warp 求和</td>
+</tr>
+<tr>
+<td>★ PG §5.4.6.5</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 34656–34970 行</td>
+<td>shuffle 精确语义、<code>width</code> 参数、libcu++ 的 <code>cuda::device::warp_shuffle</code></td>
+</tr>
+<tr>
+<td>PG §5.4.6.4 Warp Reduce Functions</td>
+<td>第 34620–34655 行</td>
+<td><code>__reduce_add_sync</code> 等硬件 warp 归约</td>
+</tr>
+<tr>
+<td>PG §2.3.5 Atomics</td>
+<td>第 4274–4416 行</td>
+<td>原子操作、<code>cuda::atomic_ref</code>（C++ 风格）</td>
+</tr>
+<tr>
+<td>PG §5.4.6.6 <code>__sync</code> 约束</td>
+<td>第 34971 行起</td>
+<td>mask 里的 lane 必须都执行同一个 shuffle</td>
+</tr>
+<tr>
+<td>Quack 博客 + <code>Dao-AILab/quack</code> 源码</td>
+<td>在线</td>
+<td>线程 / warp / block / cluster 四层归约的实战模板</td>
+</tr>
+<tr>
+<td>CUB <code>WarpReduce</code>、<code>BlockReduce</code></td>
+<td><code>code/cccl/</code></td>
+<td>生产级实现</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>shuffle 归约步数</strong>：<span class="arithmatex">\(\log_2 32 = 5\)</span>；down 版本第 <span class="arithmatex">\(k\)</span> 步（<span class="arithmatex">\(d = 16/2^{k-1}\)</span>）后 lane <span class="arithmatex">\(t &lt; d\)</span> 的值 = 原来 lane <span class="arithmatex">\(t, t+d, t+2d, \dots\)</span> 中 <span class="arithmatex">\(32/d\)</span> 个数之和。</li>
+<li><strong>xor 蝴蝶</strong>：第 <span class="arithmatex">\(k\)</span> 步 lane <span class="arithmatex">\(t\)</span> 与 <span class="arithmatex">\(t \oplus 2^{k-1}\)</span> 交换相加；归纳可证 <span class="arithmatex">\(k\)</span> 步后每个 lane 持有"与自己只在低 <span class="arithmatex">\(k\)</span> 位不同的 <span class="arithmatex">\(2^k\)</span> 个 lane"的和，5 步后为全体之和。</li>
+<li><strong>原子操作的串行化</strong>：同一地址 <span class="arithmatex">\(m\)</span> 次原子更新，最少耗时 ∝ <span class="arithmatex">\(m\)</span>；先在 block 内归约把 <span class="arithmatex">\(m\)</span> 从"线程数"降到"block 数"。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>lane 号</td>
+<td><code>int lane = threadIdx.x % 32;</code>（一维 block）</td>
+</tr>
+<tr>
+<td>warp 求和（down）</td>
+<td><code>for (d = 16; d &gt; 0; d &gt;&gt;= 1) v += __shfl_down_sync(0xffffffff, v, d);</code></td>
+</tr>
+<tr>
+<td>warp 求和（xor，全员得结果）</td>
+<td><code>for (m = 1; m &lt; 32; m &lt;&lt;= 1) v += __shfl_xor_sync(0xffffffff, v, m);</code></td>
+</tr>
+<tr>
+<td>广播 lane 0</td>
+<td><code>v = __shfl_sync(0xffffffff, v, 0);</code></td>
+</tr>
+<tr>
+<td>原子加</td>
+<td><code>atomicAdd(&amp;total, x);</code></td>
+</tr>
+<tr>
+<td>CAS</td>
+<td><code>old = atomicCAS(addr, expected, desired);</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch11_shuffle_atomics.py</code>，配套测试 <code>tests/test_ch07_12.py</code>；同一章的 notebook：<code>notebooks/ch11_shuffle_atomics.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch11_shuffle_atomics.py   # 一步一步打印  
+uv run pytest tests/test_ch07_12.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二步 <code>__shfl_down_sync</code></td>
+<td>lane t 拿 lane t + d</td>
+<td><code>warp_sum_down(v)</code>（8 个 lane，d = 4, 2, 1）</td>
+<td>8 10 6 7 → 14 17 → 31</td>
+</tr>
+<tr>
+<td>第二步 <code>__shfl_xor_sync</code></td>
+<td>lane t 拿 lane t XOR m</td>
+<td><code>warp_sum_xor(v)</code></td>
+<td>8 个 lane 全是 31</td>
+</tr>
+<tr>
+<td>第二步 32 个 lane</td>
+<td><span class="arithmatex">\(\log_2 32\)</span> 步</td>
+<td><code>warp_sum_down(w)</code></td>
+<td>5 步，lane 0 = np.sum</td>
+</tr>
+<tr>
+<td>第四步 原子加</td>
+<td>读-改-写一次做完</td>
+<td><code>counter(1000, atomic=True)</code></td>
+<td>1000</td>
+</tr>
+<tr>
+<td>第四步 普通写</td>
+<td>读和写被别人插进来</td>
+<td><code>counter(1000, atomic=False)</code></td>
+<td>远小于 1000</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">def shfl_down(v, d):                    # NumPy 数组 = 一个 warp 每个 lane 的寄存器
+    src = np.arange(len(v)) + d
+    src[src &gt;= len(v)] = np.arange(len(v))[src &gt;= len(v)]   # 超出 warp 的拿回自己的值
+    return v[src]
+
+while d &gt; 0:
+    v = v + shfl_down(v, d)             # v += __shfl_down_sync(0xffffffff, v, d)
+    d //= 2
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>所有 lane 都在算</strong>：<code>warp_sum_down</code> 每一步对整个数组做加法，lane 4 以上也算出了值（打印出来不是讲义表里的"—"），只是没人用——和讲义说的"它们在同一条指令里一起执行"一致。</li>
+<li><strong>超出范围的 lane 拿回自己的值</strong>：这是 CUDA 对 <code>__shfl_down_sync</code> 的规定；所以最后几个 lane 的"和"是错的，只有 lane 0 是对的。</li>
+<li><strong><code>counter(atomic=False)</code> 的交错是随机打乱的</strong>：模拟里每个线程的"读"和"写"之间可以插进任意多别人的操作，所以丢得特别多；真实 GPU 上丢多少取决于调度，结果每次都可能不同。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>warp_sum_down</code> 的输入换成 16 个 lane 的数组，看要几步、lane 0 是不是总和。</li>
+<li>把 <code>counter</code> 的线程数改成 10、100，看普通写丢了多少。</li>
+</ul><nav class="pager"><a href="10-reduction.html">← 第 10 章 · 归约：一百万个数求和，怎么让一千个线程分着加</a><a href="12-scan.html">第 12 章 · 前缀和 scan：每个位置都要&quot;前面所有数的和&quot; →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

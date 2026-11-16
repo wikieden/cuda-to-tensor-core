@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CUDA 从线程到 Tensor Core · 讲义目录 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="cuda-tensor-core">CUDA 从线程到 Tensor Core · 讲义目录</h1>
+<blockquote>
+<p>27 章 · 27 个动画（GIF + 可交互页面）· 27 本 notebook · 64 张复习卡片 · 覆盖 study-plan 阶段 1–12（含 9.5）的理论部分；每章的数字都用 <code>solutions/chapter-code/</code> 的代码算过、测试核对过</p>
+</blockquote>
+<h2 id="_1">这本书讲什么</h2>
+<p>从"一个 for 循环怎么交给成千上万个线程"讲起，一步步走到 2026 年 AI kernel 的前沿：线程层级、warp、内存层级、合并访存、bank conflict、occupancy、roofline；归约、shuffle、scan；从 naive 到 94% cuBLAS 的 SGEMM；Tensor Core 四代指令；Ampere 异步拷贝、Hopper 的 TMA / wgmma / warp specialization、CuTe、Blackwell 的 TMEM 与块缩放低精度；online softmax、FlashAttention 1–4、推理 kernel；最后是 Tile 模型与各种 DSL、编译部署、CUDA Graphs / PDL，以及一套优化方法论。</p>
+<ul>
+<li><strong>适合谁</strong>：会写 C / C++ 或 Python、想看懂并亲手写 GPU kernel 的人。不需要事先懂硬件；要用到的数学只有向上取整、最大公约数、指数函数。</li>
+<li><strong>读完能做什么</strong>：读懂 Programming Guide、Boehm / Pranjal 的 GEMM worklog、Colfax 的 CUTLASS 教程、FlashAttention 2/3/4 论文；按 study-plan 的里程碑 M0–M11 动手写 kernel；拿到一个慢 kernel 知道先查什么。</li>
+<li><strong>怎么读</strong>：按章顺序读。每章先看讲解和动画，再自己做练习，最后用复习卡片隔几天考自己。第 1–12 章在 Mac 上就能配合 cubecl-lab 练；第 13 章以后的动手部分需要云 GPU（study-plan 标了最低卡型）。</li>
+</ul>
+<h2 id="_2">讲解的特点</h2>
+<ul>
+<li><strong>一次一小步</strong>：每个概念按"白话类比 → 代码 / 公式 → 小数字亲手算一遍"讲，算例全部由 <code>chapter-code</code> 的测试核对。</li>
+<li><strong>几条主线贯穿全书</strong>：考场与教室（线程编号）、32 个窗口的食堂（bank）、洗衣房（延迟隐藏）、Boehm 的 A6000 SGEMM 表（第 13–14 章）、Pranjal 的 H100 GEMM 表（第 18 章）、online softmax 的 (m, ℓ)（第 21–23 章反复出现）。</li>
+<li><strong>每章一个动画</strong>：关键原理做成可交互页面，▶ 播放、→ 单步、↺ 从头开始，开关切换不同情形；GIF 版直接嵌在正文里。</li>
+<li><strong>对照原文</strong>：讲到 Programming Guide、Best Practices、PTX ISA、论文、博客的地方都标了本地文本的章节号和行号（如 PG §2.3.4.1，<code>text/cuda-programming-guide.txt</code> 第 3743 行），没有本地文本的标〔旧知〕。</li>
+<li><strong>术语不设门槛</strong>：缩写第一次出现就给英文全称并逐词解释，全书缩写见 <a href="../lessons/appendix-glossary.html">缩写与术语表</a>。</li>
+<li><strong>每章都有代码对照</strong>：Mac 上没有 NVIDIA GPU，所以每章附录用 NumPy 在 CPU 上<strong>模拟</strong>同样的规则（线程编号、32 字节一箱、32 个 bank、片段布局、流水线时间线、mbarrier 记账……），把讲义里的数字算一遍，配测试核对、配 notebook 一格一格跑；需要真 GPU 才能看到的部分标 <code>[GPU]</code>。只算讲过的例子，不提前给练习答案。</li>
+<li><strong>每章收尾有口诀</strong>，全部口诀汇总在本页末尾。</li>
+</ul>
+<h2 id="_3">示例动画</h2>
+<table>
+<tr>
+<td width="33%" valign="top"><img src="../animations/07-bank-conflict.gif" width="100%" alt="第 7 章 · bank conflict"><br><b>第 7 章 · bank conflict</b><br>按列读 32 路冲突，每行多放一个就散开<br><a href="../lessons/07-shared-memory-banks.html">讲义</a> · <a href="../animations/07-bank-conflict.html">▶ 交互</a></td>
+<td width="33%" valign="top"><img src="../animations/18-warp-specialization.gif" width="100%" alt="第 18 章 · warp specialization"><br><b>第 18 章 · warp specialization</b><br>生产者搬、消费者算，full / empty 两盏灯<br><a href="../lessons/18-hopper-wgmma-warp-specialization.html">讲义</a> · <a href="../animations/18-warp-specialization.html">▶ 交互</a></td>
+<td width="33%" valign="top"><img src="../animations/22-flashattention.gif" width="100%" alt="第 22 章 · FlashAttention"><br><b>第 22 章 · FlashAttention</b><br>一个 Q 块扫过 K、V，S 用完即丢<br><a href="../lessons/22-flashattention.html">讲义</a> · <a href="../animations/22-flashattention.html">▶ 交互</a></td>
+</tr>
+<tr>
+<td width="33%" valign="top"><img src="../animations/06-coalescing.gif" width="100%" alt="第 6 章 · 合并访存"><br><b>第 6 章 · 合并访存</b><br>32 个地址落在几箱：相邻读 4 箱，跨步读一人一箱<br><a href="../lessons/06-coalescing.html">讲义</a> · <a href="../animations/06-coalescing.html">▶ 交互</a></td>
+<td width="33%" valign="top"><img src="../animations/14-register-tiling.gif" width="100%" alt="第 14 章 · 寄存器分块"><br><b>第 14 章 · 寄存器分块</b><br>读一列 A、一行 B，外积出一个小方块<br><a href="../lessons/14-sgemm-register-tiling.html">讲义</a> · <a href="../animations/14-register-tiling.html">▶ 交互</a></td>
+<td width="33%" valign="top"><img src="../animations/21-online-softmax.gif" width="100%" alt="第 21 章 · online softmax"><br><b>第 21 章 · online softmax</b><br>边读边改账：遇到更大的数，旧账乘 e 的差<br><a href="../lessons/21-online-softmax-fusion.html">讲义</a> · <a href="../animations/21-online-softmax.html">▶ 交互</a></td>
+</tr>
+</table>
+
+<p>全部动画见 <a href="../animations/index.html">动画目录</a>。</p>
+<h2 id="_4">其他入口</h2>
+<ul>
+<li>复习卡片：<a href="../review.html">../review.md</a>（C01–C64，按间隔规则复习）</li>
+<li>代码对照与 notebook：../../solutions/chapter-code/（27 个模块、27 本 notebook，<code>uv run pytest</code> 核对全部章节）</li>
+<li>缩写与术语表：<a href="../lessons/appendix-glossary.html">appendix-glossary.md</a></li>
+<li>学习计划与里程碑：../study-plan.md</li>
+<li>资料与优化方案调研：../04-resources-and-optimization-survey.md；Rust 与 C++ 选型：../03-rust-vs-cpp.md</li>
+</ul>
+<h2 id="_5">全流程总览</h2>
+<p>目标：让 GPU 把一个矩阵乘 <span class="arithmatex">\(C = AB\)</span> 算到接近硬件上限——全书大部分章节都是这条路上的一步；后面的 attention、推理 kernel 用的是同样几招。</p>
+<pre><code>CPU 的三重循环：C[x][y] += A[x][i] · B[i][y]
+   │  只写循环体，一个线程算一个 C[x][y]：i = blockIdx × blockDim + threadIdx     第 1 章
+   ▼
+grid → block → warp：block 一波一波派到 SM，warp 32 人一个口令                   第 2、3 章
+   │  host：分配、拷进、启动、同步、拷回、查错                                     第 4 章
+   ▼
+① 先判断：算术强度 vs 脊点 → GEMM 是 compute-bound，归约是 memory-bound           第 9 章
+② 读对显存：threadIdx.x 对最后一维，32 字节一箱合并                              第 5、6 章（Kernel 2）
+③ 读一次用多次：tile 搬进 shared，两道 __syncthreads，躲开 bank conflict          第 7、13 章（Kernel 3）
+④ 再上一层：寄存器分块、外积、float4、warptiling；occupancy 低也能藏延迟          第 8、14 章（Kernel 4–10）
+⑤ 换计算单元：Tensor Core（mma.sync、ldmatrix、swizzle）                         第 15 章
+⑥ 搬和算重叠：cp.async 流水线 → TMA + mbarrier → wgmma + warp 专业化 → TMEM       第 16–20 章（CuTe 第 19 章）
+⑦ 中间结果不落地：online softmax → FlashAttention → 推理 kernel                 第 21–23 章
+⑧ 落地：选 DSL、编译部署、Graph / PDL 去空隙、对拍和计时                          第 24–27 章
+   ▼
+接近 SOL 的 kernel（A6000 SGEMM 达到 cuBLAS 的 94%；H100 BF16 GEMM 764 TFLOP/s）
+
+旁支：memory-bound 的运算（求和、softmax、norm）靠归约、shuffle、scan          第 10–12 章
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>步</th>
+<th>做什么</th>
+<th>为什么这样做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>写 kernel</td>
+<td>只写循环体，每个线程用全局编号认领一份活；host 向上取整、kernel 越界检查</td>
+<td>GPU 一次叫来成千上万个线程，每人跑同一份代码</td>
+</tr>
+<tr>
+<td>分层执行</td>
+<td>block 互不依赖、按波派到 SM；SM 把 block 切成 warp</td>
+<td>换多少个 SM 都对；warp 是真正的执行单位，分岔只在 warp 里</td>
+</tr>
+<tr>
+<td>① 判断瓶颈</td>
+<td>算 FLOP ÷ 字节，和脊点比</td>
+<td>低于脊点看带宽、高于脊点看算力，手段完全不同</td>
+</tr>
+<tr>
+<td>② 合并访存</td>
+<td>相邻线程读相邻地址</td>
+<td>显存按 32 字节一箱发货，乱读会搬回大量用不到的字节</td>
+</tr>
+<tr>
+<td>③ shared 分块</td>
+<td>一块数据从显存读一次，在片上被 32 个线程用</td>
+<td>naive GEMM 每个数被读 4096 次</td>
+</tr>
+<tr>
+<td>④ 寄存器分块</td>
+<td>每个线程算一个小方块，读的是边、算的是面积</td>
+<td>shared 也有带宽和指令开销</td>
+</tr>
+<tr>
+<td>⑤ Tensor Core</td>
+<td>一个 warp 一条指令做一个小矩阵乘</td>
+<td>比 CUDA core 快一个数量级</td>
+</tr>
+<tr>
+<td>⑥ 异步与专业化</td>
+<td>搬下一块时算这一块；搬运组只搬、计算组只算</td>
+<td>流水线把快的那一步藏起来，让 Tensor Core 不停</td>
+</tr>
+<tr>
+<td>⑦ 融合</td>
+<td>几个运算放进一个 kernel，中间结果留在片上</td>
+<td>memory-bound 的时间就是读写次数</td>
+</tr>
+<tr>
+<td>⑧ 落地</td>
+<td>先用 DSL 写对，再编译分发、消掉启动空隙，按规范计时、和光速比</td>
+<td>写对、测准、能部署，"快"才有意义</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_6">全书地图</h2>
+<pre><code>第 1–4 章  编程模型（阶段 1）
+  只写循环体 → grid / block / thread 与全局编号 → block 互不依赖、按波调度
+  → warp 与 SIMT、分岔 → host / device 五步、异步启动、查错
+
+第 5–9 章  内存与性能分析（阶段 2）
+  寄存器 / shared / L1 / L2 / 显存 → 合并访存（32 字节一箱）→ bank conflict 与 padding
+  → occupancy 与延迟隐藏（TLP / ILP）→ roofline、正确计时、Nsight
+
+第 10–12 章  并行原语（阶段 3）
+  树形归约、grid-stride → warp shuffle、四层归约、原子 → scan（Hillis–Steele / Blelloch）
+
+第 13–15 章  GEMM 与 Tensor Core（阶段 4–5）
+  naive → 合并 → shared 分块 → 寄存器分块（外积）→ 向量化 → warptiling（1.3% → 94%）
+  → WMMA / mma.sync / ldmatrix / swizzle
+
+第 16–20 章  新架构（阶段 6–8）
+  cp.async 与多级流水线 → TMA + mbarrier + cluster → wgmma + warp specialization + persistent
+  → CuTe layout 代数 → Blackwell：TMEM、单线程 MMA、2-SM、NVFP4
+
+第 21–23 章  融合与 LLM kernel（阶段 9–9.5）
+  online softmax 与算子融合 → FlashAttention 1–4 → decode：paged KV、split-KV、MLA、megakernel
+
+第 24–27 章  工具与生产（阶段 10–12）
+  Tile 模型与 DSL 选型 → PTX / cubin / fatbin、NVRTC、Rust host → streams / Graphs / PDL
+  → 优化方法论、AI 写 kernel 的坑、接下来做 M0–M11
+</code></pre>
+<h2 id="_7">目录</h2>
+<p>每章都配一个动画：<strong>GIF</strong> 在讲义正文里直接播放，<strong>▶ 交互</strong>是可以点按钮的页面（本地看需要起服务，见 <a href="../animations/index.html">动画目录</a>"跑起来看"）。</p>
+<table>
+<thead>
+<tr>
+<th>章</th>
+<th>阶段</th>
+<th>主题</th>
+<th>一句话精要</th>
+<th>动画</th>
+<th>卡片</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../lessons/01-thread-hierarchy.html">1</a></td>
+<td>1</td>
+<td>线程层级与全局编号</td>
+<td>只写循环体，一人领一个；向上取整 + 越界检查</td>
+<td><a href="../animations/01-thread-index.gif">GIF</a> · <a href="../animations/01-thread-index.html">▶</a></td>
+<td>C01–C03</td>
+<td>已讲，练习待作答</td>
+</tr>
+<tr>
+<td><a href="../lessons/02-block-scheduling.html">2</a></td>
+<td>1</td>
+<td>block 调度与波</td>
+<td>block 之间不许等；最后一波不满是尾巴</td>
+<td><a href="../animations/02-block-waves.gif">GIF</a> · <a href="../animations/02-block-waves.html">▶</a></td>
+<td>C04–C05</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/03-warp-simt.html">3</a></td>
+<td>1</td>
+<td>warp 与 SIMT</td>
+<td>32 人一个口令；分岔只在 warp 里</td>
+<td><a href="../animations/03-warp-divergence.gif">GIF</a> · <a href="../animations/03-warp-divergence.html">▶</a></td>
+<td>C06–C08</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/04-host-device-program.html">4</a></td>
+<td>1</td>
+<td>完整程序：分配、拷贝、启动、同步、查错</td>
+<td>启动是下单不是等饭；错误会晚到</td>
+<td><a href="../animations/04-host-device-timeline.gif">GIF</a> · <a href="../animations/04-host-device-timeline.html">▶</a></td>
+<td>C09–C10</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/05-memory-hierarchy.html">5</a></td>
+<td>2</td>
+<td>内存层级</td>
+<td>越近越快越小；local 不在本地</td>
+<td><a href="../animations/05-memory-hierarchy.gif">GIF</a> · <a href="../animations/05-memory-hierarchy.html">▶</a></td>
+<td>C11–C12</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/06-coalescing.html">6</a></td>
+<td>2</td>
+<td>合并访存</td>
+<td>32 字节一箱；跨步 s 利用率 1/s</td>
+<td><a href="../animations/06-coalescing.gif">GIF</a> · <a href="../animations/06-coalescing.html">▶</a></td>
+<td>C13–C14</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/07-shared-memory-banks.html">7</a></td>
+<td>2</td>
+<td>shared memory 与 bank conflict</td>
+<td>冲突路数 = gcd(跨步, 32)；[32][33] 散开</td>
+<td><a href="../animations/07-bank-conflict.gif">GIF</a> · <a href="../animations/07-bank-conflict.html">▶</a></td>
+<td>C15–C17</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/08-occupancy.html">8</a></td>
+<td>2</td>
+<td>occupancy 与延迟隐藏</td>
+<td>四道门槛看最紧；不是越高越好</td>
+<td><a href="../animations/08-occupancy.gif">GIF</a> · <a href="../animations/08-occupancy.html">▶</a></td>
+<td>C18–C19</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/09-roofline-profiling.html">9</a></td>
+<td>2</td>
+<td>roofline、计时、Nsight</td>
+<td>低于脊点看带宽，高于脊点看算力</td>
+<td><a href="../animations/09-roofline.gif">GIF</a> · <a href="../animations/09-roofline.html">▶</a></td>
+<td>C20–C22</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/10-reduction.html">10</a></td>
+<td>3</td>
+<td>归约</td>
+<td>前一半加后一半；先 grid-stride 再淘汰赛</td>
+<td><a href="../animations/10-reduction-tree.gif">GIF</a> · <a href="../animations/10-reduction-tree.html">▶</a></td>
+<td>C23–C24</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/11-warp-shuffle-atomics.html">11</a></td>
+<td>3</td>
+<td>warp shuffle 与原子操作</td>
+<td>32 个数 5 步加完；原子不丢账但排队</td>
+<td><a href="../animations/11-warp-shuffle.gif">GIF</a> · <a href="../animations/11-warp-shuffle.html">▶</a></td>
+<td>C25–C27</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/12-scan.html">12</a></td>
+<td>3</td>
+<td>前缀和 scan</td>
+<td>Hillis–Steele 看远一倍；Blelloch 上树下树</td>
+<td><a href="../animations/12-scan.gif">GIF</a> · <a href="../animations/12-scan.html">▶</a></td>
+<td>C28–C29</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/13-sgemm-tiling.html">13</a></td>
+<td>4</td>
+<td>SGEMM ①：合并与 shared 分块</td>
+<td>一个数被读几千次，搬进 shared 用 32 次</td>
+<td><a href="../animations/13-gemm-tiling.gif">GIF</a> · <a href="../animations/13-gemm-tiling.html">▶</a></td>
+<td>C30–C31</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/14-sgemm-register-tiling.html">14</a></td>
+<td>4</td>
+<td>SGEMM ②：寄存器分块、向量化、warptiling</td>
+<td>读的是边、算的是面积；13% → 94%</td>
+<td><a href="../animations/14-register-tiling.gif">GIF</a> · <a href="../animations/14-register-tiling.html">▶</a></td>
+<td>C32–C33</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/15-tensor-core-mma.html">15</a></td>
+<td>5</td>
+<td>Tensor Core：WMMA、mma.sync、ldmatrix</td>
+<td>一个 warp 一条指令做一个小矩阵乘</td>
+<td><a href="../animations/15-mma-fragment.gif">GIF</a> · <a href="../animations/15-mma-fragment.html">▶</a></td>
+<td>C34–C36</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/16-async-copy-pipeline.html">16</a></td>
+<td>6</td>
+<td>异步拷贝与多级流水线</td>
+<td>搬这块时算上块；慢的那步决定总时间</td>
+<td><a href="../animations/16-async-pipeline.gif">GIF</a> · <a href="../animations/16-async-pipeline.html">▶</a></td>
+<td>C37–C38</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/17-hopper-tma-mbarrier.html">17</a></td>
+<td>6</td>
+<td>Hopper ①：TMA、mbarrier、cluster</td>
+<td>一个线程搬整块；按字节记账</td>
+<td><a href="../animations/17-tma-mbarrier.gif">GIF</a> · <a href="../animations/17-tma-mbarrier.html">▶</a></td>
+<td>C39–C41</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/18-hopper-wgmma-warp-specialization.html">18</a></td>
+<td>6</td>
+<td>Hopper ②：wgmma、warp specialization、persistent</td>
+<td>搬运组只搬、计算组只算；常驻 132 个 block</td>
+<td><a href="../animations/18-warp-specialization.gif">GIF</a> · <a href="../animations/18-warp-specialization.html">▶</a></td>
+<td>C42–C44</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/19-cute-layout.html">19</a></td>
+<td>7</td>
+<td>CuTe layout</td>
+<td>Layout = Shape : Stride；换卡只换 Atom</td>
+<td><a href="../animations/19-cute-layout.gif">GIF</a> · <a href="../animations/19-cute-layout.html">▶</a></td>
+<td>C45–C46</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/20-blackwell-tcgen05.html">20</a></td>
+<td>8</td>
+<td>Blackwell：tcgen05、TMEM、块缩放</td>
+<td>累加器搬进 TMEM，一个线程发 MMA</td>
+<td><a href="../animations/20-tcgen05-tmem.gif">GIF</a> · <a href="../animations/20-tcgen05-tmem.html">▶</a></td>
+<td>C47–C49</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/21-online-softmax-fusion.html">21</a></td>
+<td>9</td>
+<td>online softmax 与算子融合</td>
+<td>边读边改账；中间结果别落地</td>
+<td><a href="../animations/21-online-softmax.gif">GIF</a> · <a href="../animations/21-online-softmax.html">▶</a></td>
+<td>C50–C51</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/22-flashattention.html">22</a></td>
+<td>9</td>
+<td>FlashAttention 1–4</td>
+<td>分块 + online softmax；每代硬件换瓶颈</td>
+<td><a href="../animations/22-flashattention.gif">GIF</a> · <a href="../animations/22-flashattention.html">▶</a></td>
+<td>C52–C53</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/23-inference-kernels.html">23</a></td>
+<td>9.5</td>
+<td>推理 kernel</td>
+<td>decode 强度 ≈ batch；分页、分段、合并</td>
+<td><a href="../animations/23-paged-kv.gif">GIF</a> · <a href="../animations/23-paged-kv.html">▶</a></td>
+<td>C54–C55</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/24-tile-dsl.html">24</a></td>
+<td>10</td>
+<td>Tile 模型与 DSL</td>
+<td>替 block 想而不是替线程想；先 Triton 写对</td>
+<td><a href="../animations/24-simt-vs-tile.gif">GIF</a> · <a href="../animations/24-simt-vs-tile.html">▶</a></td>
+<td>C56–C57</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/25-compile-deploy.html">25</a></td>
+<td>11</td>
+<td>编译与部署</td>
+<td>PTX 给未来、cubin 给现在；C++ kernel + Rust host</td>
+<td><a href="../animations/25-compile-pipeline.gif">GIF</a> · <a href="../animations/25-compile-pipeline.html">▶</a></td>
+<td>C58–C59</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/26-streams-graphs-pdl.html">26</a></td>
+<td>12</td>
+<td>streams、CUDA Graphs、PDL</td>
+<td>Graph 省 CPU 下单，PDL 省 GPU 空隙</td>
+<td><a href="../animations/26-launch-timeline.gif">GIF</a> · <a href="../animations/26-launch-timeline.html">▶</a></td>
+<td>C60–C62</td>
+<td>正文完成，练习待做</td>
+</tr>
+<tr>
+<td><a href="../lessons/27-methodology-wrap-up.html">27</a></td>
+<td>12</td>
+<td>实战方法论与收尾</td>
+<td>少搬、多用、边搬边算</td>
+<td><a href="../animations/27-optimization-flow.gif">GIF</a> · <a href="../animations/27-optimization-flow.html">▶</a></td>
+<td>C63–C64</td>
+<td>正文完成，练习待做</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_8">口诀汇总</h2>
+<p><strong><a href="../lessons/01-thread-hierarchy.html">第 1 章 · 一个 kernel 怎么分给成千上万个线程</a></strong></p>
+<blockquote>
+<p>只写循环体，一人领一个；<br />
+学校分教室，教室分座位：grid 套 block，block 套 thread；<br />
+准考证号 = 教室号 × 每间座位数 + 座位号；<br />
+人数向上取整，多的人举手不答题（<code>if (i &lt; n)</code>）。</p>
+</blockquote>
+<p><strong><a href="../lessons/02-block-scheduling.html">第 2 章 · block 为什么必须互不依赖</a></strong></p>
+<blockquote>
+<p>block 是工单，SM 是车间，谁空派给谁，顺序不保证；<br />
+派了就做完，中途不换车间；<br />
+block 之间不许等，要交换就拆 kernel、用原子、上 cluster；<br />
+一次跑满叫一波，最后一波不满是尾巴，block 数要是 SM 数的好几倍。</p>
+</blockquote>
+<p><strong><a href="../lessons/03-warp-simt.html">第 3 章 · warp 与 SIMT</a></strong></p>
+<blockquote>
+<p>32 人一个班，班长喊一个口令，大家做同一个动作（SIMT）；<br />
+分岔了就分两趟喊，不走这条路的原地等；<br />
+分岔只在 warp 里，按 warp 分组就不浪费；<br />
+block 取 32 的倍数，别让最后一班坐不满；<br />
+Volta 以后不再保证齐步走，要同步就写 <code>__syncwarp()</code>。</p>
+</blockquote>
+<p><strong><a href="../lessons/04-host-device-program.html">第 4 章 · 一个完整的 CUDA 程序</a></strong></p>
+<blockquote>
+<p>两个仓库一条窄路：能不搬就不搬，搬了就多干几道；<br />
+五步走：分配、拷进、启动、同步、拷回（最后释放）；<br />
+启动是下单不是等饭，要结果先同步，计时也先同步；<br />
+尖括号不报错，启动后查 <code>cudaGetLastError</code>；kernel 里的错会晚到，查不清就上 compute-sanitizer。</p>
+</blockquote>
+<p><strong><a href="../lessons/05-memory-hierarchy.html">第 5 章 · GPU 内存层级</a></strong></p>
+<blockquote>
+<p>手里、台面、小冰箱、大冷库、城外仓库：越往外越大越慢；<br />
+寄存器编译器管，shared 自己管，L1 / L2 硬件管，显存怎么读你来管；<br />
+local 不在本地，在显存里，数组下标别用变量；<br />
+优化一句话：读一次，用很多次。</p>
+</blockquote>
+<p><strong><a href="../lessons/06-coalescing.html">第 6 章 · 合并访存</a></strong></p>
+<blockquote>
+<p>显存按箱发货，一箱 32 字节；<br />
+warp 一起下单，同箱只运一次；<br />
+相邻线程读相邻地址：4 箱满载；跨步 s：利用率 1/s；隔 32 字节以上：一人一箱，八分之一；<br />
+threadIdx.x 对最后一维；转置靠 shared 中转；一次读 float4，指令省四倍。</p>
+</blockquote>
+<p><strong><a href="../lessons/07-shared-memory-banks.html">第 7 章 · shared memory 与 bank conflict</a></strong></p>
+<blockquote>
+<p>shared 是 block 的公共台面，写完要等、读完再覆盖也要等；<br />
+<code>__syncthreads()</code> 要全员到场，别写在 if 里；<br />
+32 个窗口轮着排，字地址模 32 就是窗口号；<br />
+同窗不同菜要排队，同窗同菜一起打；冲突路数 = gcd(跨步, 32)，奇数跨步不冲突；<br />
+按列读二维数组冲突 32 路，每行多放一个就散开。</p>
+</blockquote>
+<p><strong><a href="../lessons/08-occupancy.html">第 8 章 · occupancy 与延迟隐藏</a></strong></p>
+<blockquote>
+<p>等的时候换人干：warp 切换不花钱，多养几个 warp 轮流等；<br />
+occupancy = 驻留 warp ÷ 最多 warp；<br />
+四道门槛看最紧：线程、block 数、寄存器、shared；<br />
+太低一定慢，太高不一定快：一个线程多件事在路上（ILP）也能藏延迟。</p>
+</blockquote>
+<p><strong><a href="../lessons/09-roofline-profiling.html">第 9 章 · 性能分析</a></strong></p>
+<blockquote>
+<p>先分三类：算不过来、搬不过来、GPU 在闲着；<br />
+算术强度 = FLOP ÷ 字节，脊点 = 算力 ÷ 带宽；低于脊点看带宽，高于脊点看算力；<br />
+计时用 event，先预热，取中位数，小输入清 L2；<br />
+先 nsys 看全局，再 ncu 看单个：SOL 两个数，warp 在等什么。</p>
+</blockquote>
+<p><strong><a href="../lessons/10-reduction.html">第 10 章 · 归约</a></strong></p>
+<blockquote>
+<p>能结合就能并行，浮点不严格结合，对拍要容差；<br />
+淘汰赛：N 个数 log N 轮；<br />
+前一半加后一半：不分岔、不冲突；相邻两两加：又分岔又冲突；<br />
+block 之间不能等：要么两个 kernel，要么原子加；<br />
+先在寄存器里多加几个（grid-stride），再进 shared 打淘汰赛。</p>
+</blockquote>
+<p><strong><a href="../lessons/11-warp-shuffle-atomics.html">第 11 章 · warp shuffle 与原子操作</a></strong></p>
+<blockquote>
+<p>同一个 warp 直接递纸条，不过讲台、不用全班等；<br />
+down 往大号拿，up 往小号拿，xor 找二进制伙伴，sync 指名道姓；<br />
+32 个数 5 步加完：16、8、4、2、1；<br />
+归约四层：线程里多加，warp 里 shuffle，block 里 shared，全局原子加；<br />
+原子不丢账但要排队：一个 block 一次可以，一个线程一次太慢。</p>
+</blockquote>
+<p><strong><a href="../lessons/12-scan.html">第 12 章 · 前缀和 scan</a></strong></p>
+<blockquote>
+<p>scan：每个位置要前面所有数的和；inclusive 带自己，exclusive 不带；<br />
+Hillis–Steele 每轮看远一倍：log N 轮，N log N 次加，适合 warp 里；<br />
+Blelloch 先上树后下树：2 log N 轮，2N 次加，省工作量；<br />
+读完再写，两道栅栏；<br />
+跨 block：三段式最稳，单趟靠原子发号 + 往回看，生产用 CUB。</p>
+</blockquote>
+<p><strong><a href="../lessons/13-sgemm-tiling.html">第 13 章 · SGEMM ①</a></strong></p>
+<blockquote>
+<p>一人一格做点积：每算 2 次读 8 字节，1% 峰值；<br />
+threadIdx.x 对列：A 广播、B 合并，快 6 倍；<br />
+一个数被读几千次，搬进 shared 用 32 次；<br />
+搬、等、算、等：写完要等，读完再覆盖也要等；<br />
+瓶颈从显存挪到 shared，下一步搬进寄存器。</p>
+</blockquote>
+<p><strong><a href="../lessons/14-sgemm-register-tiling.html">第 14 章 · SGEMM ②</a></strong></p>
+<blockquote>
+<p>每一层都分块：显存到 shared 一次，shared 到寄存器一次；<br />
+一人算一格读两次，一人算一方块读一圈：读的是边，算的是面积；<br />
+外积：读一列 A、一行 B，乘出一个小方块；<br />
+读宽一点（float4、LDS.128），参数自动调，换卡就重调；<br />
+中间加一层 warp tile，正好接上 Tensor Core。</p>
+</blockquote>
+<p><strong><a href="../lessons/15-tensor-core-mma.html">第 15 章 · Tensor Core</a></strong></p>
+<blockquote>
+<p>Tensor Core 一条指令做一个小矩阵乘，一个 warp 一起干；<br />
+低精度进、FP32 累加，比 CUDA core 快一个数量级；<br />
+fragment 把小矩阵拆进 32 个线程的寄存器：WMMA 不告诉你谁拿哪个，mma.sync 写在 PTX 里；<br />
+ldmatrix 一条指令按布局搬进寄存器，swizzle 让它不撞 bank；<br />
+一代比一代大：warp → warpgroup → 单线程发起，同步 → 异步。</p>
+</blockquote>
+<p><strong><a href="../lessons/16-async-copy-pipeline.html">第 16 章 · 异步拷贝与多级流水线</a></strong></p>
+<blockquote>
+<p>搬完再算两头闲，搬这块时算上块；<br />
+cp.async 下单直送台面：不经寄存器、发了就走，搬完只告诉自己，别人要看还得同步；<br />
+双缓冲两份台面轮着用，多级流水多几块在路上；<br />
+流水线只能藏起快的那一步，慢的那一步决定总时间；<br />
+barrier 有相位：先报到、做别的、再等。</p>
+</blockquote>
+<p><strong><a href="../lessons/17-hopper-tma-mbarrier.html">第 17 章 · Hopper ①</a></strong></p>
+<blockquote>
+<p>TMA 是专职搬运工：一张仓库地图（tensor map），一个线程一条指令搬整块，越界自动补零；<br />
+mbarrier 按人头也按字节记账：expect_tx 先报数，搬完自动扣，清零翻相位；<br />
+cluster 把相邻 block 绑一组：同时上岗、能互相等、能翻对方的台面（DSMEM）；<br />
+multicast 一次读、几家同时收。</p>
+</blockquote>
+<p><strong><a href="../lessons/18-hopper-wgmma-warp-specialization.html">第 18 章 · Hopper ②</a></strong></p>
+<blockquote>
+<p>wgmma：四个 warp 一起、一条指令一大块、B 直接从 shared 读、发了就走；<br />
+分工：搬运组只发 TMA，计算组只做 wgmma；<br />
+环形传送带两盏灯：full 亮了消费者拿，empty 亮了生产者装；<br />
+寄存器劫贫济富：搬运组只留 24 个，计算组拿 240 个；<br />
+常驻 132 个 block 循环干：store 时就搬下一块，tile 排好顺序吃 L2。</p>
+</blockquote>
+<p><strong><a href="../lessons/19-cute-layout.html">第 19 章 · CuTe</a></strong></p>
+<blockquote>
+<p>下标都是坐标点乘步长：Layout = Shape : Stride；<br />
+不写步长默认左边快（列优先），和 C 数组反着来；<br />
+形状能嵌套，一维也能拆两半；<br />
+分块是除法，铺满是乘法，重排是复合，swizzle 也是一个 layout；<br />
+Tensor = 指针 + Layout；硬件指令包成 Atom，换卡只换 Atom。</p>
+</blockquote>
+<p><strong><a href="../lessons/20-blackwell-tcgen05.html">第 20 章 · Blackwell</a></strong></p>
+<blockquote>
+<p>Blackwell 不认 wgmma，换成 tcgen05；<br />
+累加器搬进 TMEM：128 行 512 列，按列申请、用完归还，只能 ld 出来再加工；<br />
+一个线程发 MMA，搬运一个线程、计算一个线程，其余线程做收尾；<br />
+两个 SM 拼成一对，M 能到 256；<br />
+低精度靠分块缩放：MX 三十二个一块、二的幂；NVFP4 十六个一块、FP8 缩放，Tensor Core 自动乘回去。</p>
+</blockquote>
+<p><strong><a href="../lessons/21-online-softmax-fusion.html">第 21 章 · online softmax 与算子融合</a></strong></p>
+<blockquote>
+<p>softmax 先减最大值，指数不会爆；<br />
+三遍变两遍：边读边改账，遇到更大的，旧账乘 e 的差；<br />
+(m, ℓ) 能合并，就能分块、能并行；<br />
+融合：中间结果别落地，两个 memory-bound 合一个，时间砍一半；<br />
+光速两件事：合并读写，按行长选归约层级。</p>
+</blockquote>
+<p><strong><a href="../lessons/22-flashattention.html">第 22 章 · FlashAttention</a></strong></p>
+<blockquote>
+<p>标准 attention 慢在 N 乘 N：中间矩阵比输入大几十倍，还要写回显存；<br />
+FlashAttention：分块搬进片上，online softmax 边算边改账，连 O 一起打折，最后除一次 ℓ；不近似、不落地、反向重算；<br />
+FA2 晚除 ℓ、按 Q 再并行；FA3 搬算分工、乒乓重叠、上 FP8；FA4 发现 exp 跟不上，多项式顶上、能不 rescale 就不 rescale；<br />
+每一代硬件换瓶颈，算法跟着换。</p>
+</blockquote>
+<p><strong><a href="../lessons/23-inference-kernels.html">第 23 章 · 推理 kernel</a></strong></p>
+<blockquote>
+<p>prefill 算不过来，decode 搬不过来：batch 为 1 时强度约为 1；<br />
+每个 token 至少读一遍全部权重：权重字节 ÷ 带宽 = 速度上限；<br />
+KV cache 分页：页表查地址，不怕碎片；<br />
+长序列 split-KV：分段各算，按 (m, ℓ) 合并；<br />
+MLA 缓存 latent、吸收投影，KV 小了强度高了；<br />
+量化要在 GEMM 里反量化；小 kernel 太多就上 Graph 或 megakernel。</p>
+</blockquote>
+<p><strong><a href="../lessons/24-tile-dsl.html">第 24 章 · Tile 模型与 kernel DSL</a></strong></p>
+<blockquote>
+<p>SIMT 替每个线程想，Tile 替每个 block 想；<br />
+tile 不可变、2 的幂、编译期定，越界编译器管；<br />
+没有 threadIdx、没有 shared、没有同步，线程数编译器定；<br />
+从低到高：C++ / PTX → CuTe DSL / ThunderKittens → TileLang / cuTile → Triton → Helion；<br />
+先 Triton 写对，不够快再往下走；概念到哪一层都一样。</p>
+</blockquote>
+<p><strong><a href="../lessons/25-compile-deploy.html">第 25 章 · 编译与部署</a></strong></p>
+<blockquote>
+<p>PTX 是菜谱、SASS 是操作卡，ptxas 和驱动负责改写；<br />
+nvcc 一分为二：host 给 C++ 编译器，device 变 PTX 再变 cubin，装进 fatbin；<br />
+cubin 只认同代更高小版本，PTX 能给未来的卡现场编；带 a 的专属指令不往后兼容；<br />
+运行时编译：参数现场定、宿主不是 C++ 时用；<br />
+生产默认 C++ kernel + Rust host；发 kernel 交给 Kernels Hub 按版本组合编。</p>
+</blockquote>
+<p><strong><a href="../lessons/26-streams-graphs-pdl.html">第 26 章 · 延迟优化</a></strong></p>
+<blockquote>
+<p>小 kernel 一多，时间花在等：CPU 在下单，GPU 在空转；<br />
+stream 是有序队列，队列之间可并行：拷这段、算那段，要锁页、要 Async，躲开默认 stream；<br />
+Graph 录一次放千次，CPU 下单只一次；形状变了要多录；<br />
+PDL 让后一个先热身，用前一个的结果前必须同步；重叠不保证，要实测。</p>
+</blockquote>
+<p><strong><a href="../lessons/27-methodology-wrap-up.html">第 27 章 · 实战方法论与全书收尾</a></strong></p>
+<blockquote>
+<p>先写对、再判断、先全局后局部、一次改一处、和光速比；<br />
+搬不过来：合并、融合、分层归约、异步、低精度；<br />
+算不过来：分块到寄存器、Tensor Core、流水线、专业分工、swizzle、低精度；<br />
+GPU 在等：Graph、PDL、融合；<br />
+AI 写的 kernel：隐藏测试、查代码、公平基线、正确计时；<br />
+全书一句话：少搬、多用、边搬边算，让每一级都不闲着。</p>
+</blockquote>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

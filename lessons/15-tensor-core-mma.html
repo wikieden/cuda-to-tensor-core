@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 15 章 · Tensor Core：WMMA、mma.sync 与 ldmatrix · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="15-tensor-corewmmammasync-ldmatrix">第 15 章 · Tensor Core：WMMA、mma.sync 与 ldmatrix</h1><p><a class="btn" href="../animations/15-mma-fragment.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：Tensor Core 是什么，为什么比普通 CUDA core 快一个数量级？一个 warp 怎么"合作"做一个 16 × 16 × 16 的矩阵乘？WMMA 和 <code>mma.sync</code> 两套接口差在哪？<code>ldmatrix</code> 是干什么的？fragment（片段）里的数到底分在哪个线程手上？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/14-sgemm-register-tiling.html">第 14 章 SGEMM ②</a> · 下一章：<a href="../lessons/16-async-copy-pipeline.html">第 16 章 异步拷贝与多级流水线</a><br />
+对应原文：PG §5.4.11 Warp Matrix Functions（<code>materials/text/cuda-programming-guide.txt</code> 第 36052–36420 行，类型 / 形状表在 §5.4.11.6 第 36318 行起）；PTX ISA 9.4 §9.7.16（<code>text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code>：§9.7.16.1 形状第 4583 行、§9.7.16.4 WMMA 第 4893 行、§9.7.16.5.8 m16n8k16 片段第 6693 行、§9.7.16.5.15 ldmatrix 第 8169 行）；Gordić《Inside NVIDIA GPUs》Tensor Cores 一节（<code>text/blog-gordic-inside-nvidia-gpus-matmul.txt</code> 第 745–800 行）；Oxford prac5</p>
+<p>本章缩写：MMA = Matrix Multiply-Accumulate（矩阵 / 乘 / 累加，D = A × B + C）· WMMA = Warp Matrix Multiply-Accumulate（warp 级矩阵乘累加，C++ API）· TF32 = TensorFloat-32（19 位有效精度的 Tensor Core 浮点格式）· BF16 = Brain Float 16（Google Brain 提出的 16 位浮点：8 位指数、7 位尾数）· FP16 = 16 位浮点（5 位指数、10 位尾数）· HMMA = Half-precision MMA（SASS 里的 Tensor Core 指令名）· m16n8k16 = M=16、N=8、K=16 的矩阵乘形状</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="tensor-core2026-11-14">第一步：Tensor Core——专门做小矩阵乘的车间（2026-11-14）</h3>
+<p>到第 14 章为止，乘加都在 <strong>CUDA core</strong>（普通的标量 FMA 单元）上做：一条指令一个线程算 1 次乘加。</p>
+<p>Volta（CC 7.0）起，每个 SM 里多了 <strong>Tensor Core</strong>：一条指令让<strong>一个 warp 合作算一个小矩阵乘</strong>，比如 <span class="arithmatex">\(16 \times 8 \times 16\)</span>——一次 2048 次乘加。Gordić（第 69 行）："Large matrix multiplications are decomposed into many such tile operations."</p>
+<p><strong>算力差多少？</strong> H100 SXM 规格（〔旧知〕）：FP32 CUDA core 约 67 TFLOP/s；BF16 Tensor Core 稠密约 989 TFLOP/s——<strong>约 15 倍</strong>。Boehm 的 A6000 上 TF32 / BF16 Tensor Core 比 FP32 快 2.5–3.5 倍（<code>blog-boehm…</code> 第 21 行）。训练和推理里的大矩阵乘几乎全跑在 Tensor Core 上；第 14 章那套 FP32 优化是为了学原理。</p>
+<p>代价是<strong>精度和格式受限</strong>：输入是 FP16 / BF16 / TF32 / FP8 / INT8 等低精度，累加器一般是 FP32（PG §5.4.11.6 的类型表）。</p>
+<h3 id="wmmac-2026-11-14">第二步：WMMA——C++ 的"黑盒"接口（2026-11-14）</h3>
+<p>PG §5.4.11：<code>nvcuda::wmma</code> 命名空间，最直观的一套 API：</p>
+<pre><code class="language-cpp">#include &lt;mma.h&gt;
+using namespace nvcuda;
+
+wmma::fragment&lt;wmma::matrix_a, 16, 16, 16, half, wmma::row_major&gt; a;
+wmma::fragment&lt;wmma::matrix_b, 16, 16, 16, half, wmma::col_major&gt; b;
+wmma::fragment&lt;wmma::accumulator, 16, 16, 16, float&gt; c;
+
+wmma::fill_fragment(c, 0.0f);
+for (int k = 0; k &lt; K; k += 16) {
+    wmma::load_matrix_sync(a, A + row * K + k, K);     // warp 32 个线程合作读一个 16×16 小块
+    wmma::load_matrix_sync(b, B + k * N + col, N);
+    wmma::mma_sync(c, a, b, c);                        // c = a × b + c，一条&quot;指令&quot;
+}
+wmma::store_matrix_sync(C + row * N + col, c, N, wmma::mem_row_major);
+</code></pre>
+<p>关键概念 <strong>fragment（片段）</strong>：PG 原话 "a section of a matrix distributed across all threads in the warp"——一个 16 × 16 的小矩阵<strong>分散存在 warp 32 个线程的寄存器里</strong>，每个线程拿 256 / 32 = 8 个数。WMMA 故意<strong>不告诉你</strong>哪个数在哪个线程（"unspecified and subject to change"），所以你只能整体 load / mma / store，不能单独改某个元素。</p>
+<p>PG 还有一条硬性要求：这些函数<strong>必须整个 warp 一起调用</strong>，写在 <code>if</code> 里时条件必须对整个 warp 一致，否则"likely to hang"（第 3 章的分岔问题在这里是致命的）。</p>
+<h3 id="mmasyncptx-2026-11-14">第三步：<code>mma.sync</code>——PTX 层面，布局公开（2026-11-14）</h3>
+<p>WMMA 底下是 PTX 指令 <code>mma.sync.aligned.m16n8k16...</code>（Ampere 起的主力，PTX §9.7.16.5）。和 WMMA 的区别是：<strong>每个线程手里拿哪几个元素，PTX 文档写得清清楚楚</strong>（§9.7.16.5.8 的 Figure 82 起）。</p>
+<p>以 BF16 输入、FP32 累加的 m16n8k16 为例（<span class="arithmatex">\(D_{16\times8} = A_{16\times16} B_{16\times8} + C_{16\times8}\)</span>）：</p>
+<table>
+<thead>
+<tr>
+<th>矩阵</th>
+<th>元素数</th>
+<th>每线程拿</th>
+<th>寄存器</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A（16 × 16）</td>
+<td>256</td>
+<td>8 个 BF16</td>
+<td>4 个 32 位寄存器（每个装 2 个 BF16，<code>.f16x2</code>）</td>
+</tr>
+<tr>
+<td>B（16 × 8）</td>
+<td>128</td>
+<td>4 个 BF16</td>
+<td>2 个 32 位寄存器</td>
+</tr>
+<tr>
+<td>C / D（16 × 8）</td>
+<td>128</td>
+<td>4 个 FP32</td>
+<td>4 个 32 位寄存器</td>
+</tr>
+</tbody>
+</table>
+<p>知道布局就能做 WMMA 做不了的事：在累加器上<strong>直接做 epilogue</strong>（加 bias、激活、量化，不用先写回 shared 再读）、自己安排数据怎么从 shared 进寄存器。FlashAttention-2、LeetCUDA 的 HGEMM 都是直接写 <code>mma.sync</code> 的 PTX。</p>
+<h3 id="ldmatrix-fragment-2026-11-14">第四步：<code>ldmatrix</code>——一条指令把小矩阵按 fragment 布局搬进寄存器（2026-11-14）</h3>
+<p>问题来了：A 的 16 × 16 小块在 shared memory 里是按行存的，但 <code>mma.sync</code> 要求每个线程手里拿特定的 8 个元素（分散在不同行）。让每个线程自己去 shared 里一个个挑，指令多、还容易 bank conflict。</p>
+<p>PTX §9.7.16.5.15 的 <strong><code>ldmatrix</code></strong>："Collectively load one or more matrices from shared memory for mma instruction"——<strong>warp 合作从 shared memory 读 1 / 2 / 4 个 8 × 8 小矩阵，直接按 mma 需要的布局分到各线程寄存器</strong>：</p>
+<pre><code>ldmatrix.sync.aligned.m8n8.x4.shared.b16  {r0, r1, r2, r3}, [addr];
+// 32 个线程各提供一个行地址（4 个 8×8 矩阵 × 8 行 = 32 行），硬件把数据重排到位
+</code></pre>
+<p><code>.trans</code> 后缀还能<strong>顺便转置</strong>（B 矩阵常用）。Ampere 以后高性能 GEMM 的标准内循环是：</p>
+<pre><code>cp.async 显存 → shared（下一章）  →  ldmatrix shared → 寄存器  →  mma.sync  →  累加器留在寄存器
+</code></pre>
+<h3 id="shared-memory-swizzle2026-11-14">第五步：shared memory 的 swizzle（2026-11-14）</h3>
+<p><code>ldmatrix</code> 的 32 个线程读 32 个行地址。如果 tile 每行正好 64 字节或 128 字节宽，不同行的同一列落在同一个 bank 上——第 7 章的按列冲突又来了。</p>
+<p>padding（每行多放一点）可以解决，但会破坏对齐和 TMA 的要求。Tensor Core 时代的标准做法是 <strong>swizzle</strong>：写入 shared 时把列号和行号做异或（如 <code>col ^ (row % 8)</code>，以 16 字节为单位），让同一"列"在不同行里落到不同 bank；读的时候用同样的公式找回来。CuTe 和 TMA 都内置了 32B / 64B / 128B 三种 swizzle 模式（第 17、19 章）。Gordić 第 746 行："They're swizzled, and ready for tensor core consumption."</p>
+<h3 id="2026-11-14">第六步：一代比一代大（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th>代</th>
+<th>指令</th>
+<th>谁合作</th>
+<th>典型形状</th>
+<th>操作数在哪</th>
+<th>同步方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Volta / Turing（CC 7.x）</td>
+<td><code>wmma</code> / <code>mma.sync</code></td>
+<td>1 个 warp</td>
+<td>m16n16k16（WMMA）</td>
+<td>寄存器</td>
+<td>同步</td>
+</tr>
+<tr>
+<td>Ampere（CC 8.x）</td>
+<td><code>mma.sync</code> + <code>ldmatrix</code></td>
+<td>1 个 warp</td>
+<td>m16n8k16</td>
+<td>寄存器</td>
+<td>同步</td>
+</tr>
+<tr>
+<td>Hopper（CC 9.0）</td>
+<td><code>wgmma.mma_async</code></td>
+<td>4 个 warp（warpgroup，128 线程）</td>
+<td>m64nNk16，N 最大 256</td>
+<td>A 寄存器或 shared，B 在 shared，累加器在寄存器</td>
+<td><strong>异步</strong></td>
+</tr>
+<tr>
+<td>Blackwell（CC 10.0）</td>
+<td><code>tcgen05.mma</code></td>
+<td><strong>1 个线程</strong>发起</td>
+<td>最大 m128 / 2-CTA m256</td>
+<td>A、B 在 shared，累加器在 <strong>Tensor Memory</strong></td>
+<td>异步</td>
+</tr>
+</tbody>
+</table>
+<p>（Gordić 第 747–760 行列了前三种；Blackwell 见第 20 章。）趋势很清楚：<strong>每条指令越来越大、越来越异步、越来越不占寄存器</strong>——为了让 Tensor Core 不停地算，数据搬运和指令发射都要从计算里拆出去。第 16–20 章就是沿着这条线讲。</p>
+<h3 id="warp-m16n8k16">动画演示：一个 warp 合作完成 m16n8k16</h3>
+<p><img alt="Tensor Core MMA" src="../animations/15-mma-fragment.gif" /></p>
+<p>可交互版：<a href="../animations/15-mma-fragment.html">animations/15-mma-fragment.html</a>。开关：选 lane 0 / 1 / 4 / 5 / 13 / 31，看它手里拿着 A、B、D 的哪几个元素。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>三个网格：A（16 × 16）、B（16 × 8）、D（16 × 8），格子按"属于哪个 lane"着色；</li>
+<li>播放时依次点亮 lane 0、1、4……，每个 lane 手里的 A 8 个、B 4 个、D 4 个元素同时高亮；</li>
+<li>最后一帧整个 D 亮起："一条 <code>mma.sync</code> = 2048 次乘加"；</li>
+<li>对比：同样 2048 次乘加，CUDA core 要 32 个线程各发 64 条 FMA。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：m16n8k16 一条 <code>mma.sync</code> 做多少次乘加？如果一个 warp 用 CUDA core（每线程每条指令 1 次 FMA）完成同样的计算，每个线程要发多少条 FMA 指令？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：WMMA 和直接写 <code>mma.sync</code> PTX，各自的好处是什么？如果你要在矩阵乘的结果上直接加 bias 再做 ReLU，为什么 <code>mma.sync</code> 更方便？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：shared memory 里一个 BF16 的 tile 每行 64 个元素（128 字节）。8 个线程分别读第 0–7 行的第 0–7 列（每行 16 字节）。不做 swizzle 时这 8 次读落在哪些 bank？会冲突吗？（提示：128 字节 = 32 个 bank 正好一圈）</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>Tensor Core 一条指令做一个小矩阵乘，一个 warp 一起干；<br />
+低精度进、FP32 累加，比 CUDA core 快一个数量级；<br />
+fragment 把小矩阵拆进 32 个线程的寄存器：WMMA 不告诉你谁拿哪个，mma.sync 写在 PTX 里；<br />
+ldmatrix 一条指令按布局搬进寄存器，swizzle 让它不撞 bank；<br />
+一代比一代大：warp → warpgroup → 单线程发起，同步 → 异步。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C34（Tensor Core：warp 合作的小矩阵乘；fragment 分布在 32 个线程寄存器；m16n8k16 每线程 A 8 个、B 4 个、D 4 个）</li>
+<li>C35（Ampere GEMM 内循环：cp.async → ldmatrix → mma.sync；swizzle 防 bank conflict）</li>
+<li>C36（四代 MMA 指令：wmma / mma.sync / wgmma / tcgen05 的合作单位与异步性）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §5.4.11</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 36052–36420 行（含 §5.4.11.7 完整例子）</td>
+<td>WMMA 全部 API、类型与形状表、warp 一致性要求</td>
+</tr>
+<tr>
+<td>★ PTX §9.7.16.5</td>
+<td><code>text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code> 第 5664 行起；m16n8k16 片段图第 6693 行；ldmatrix 第 8169 行</td>
+<td>每个线程拿哪些元素的精确图</td>
+</tr>
+<tr>
+<td>★ Gordić《Inside NVIDIA GPUs》Tensor Cores 一节</td>
+<td><code>text/blog-gordic-inside-nvidia-gpus-matmul.txt</code> 第 745–800 行</td>
+<td>从 mma.sync 到 wgmma 的过渡，swizzle 的作用</td>
+</tr>
+<tr>
+<td>Oxford prac5</td>
+<td><code>courses/oxford-cuda-giles/prac5/</code></td>
+<td>WMMA 动手练习（M4 里程碑起点）</td>
+</tr>
+<tr>
+<td>LeetCUDA 的 HGEMM（WMMA / MMA / CuTe 三版）</td>
+<td>在线</td>
+<td>写完对照，自报达到 cuBLAS 98–100%</td>
+</tr>
+<tr>
+<td>cuda-oxide <code>wmma</code> / <code>mma_frag</code> 示例</td>
+<td><code>code/nvidia-cuda-rust/repo/</code></td>
+<td>Rust 写法对照（03 Rust vs C++）</td>
+</tr>
+<tr>
+<td>NVIDIA 博客「Programming Tensor Cores in CUDA 9」</td>
+<td>在线（〔旧知〕）</td>
+<td>WMMA 首发时的官方介绍</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>MMA 的计算量</strong>：形状 <span class="arithmatex">\(m \times n \times k\)</span> 的一次 MMA 做 <span class="arithmatex">\(mnk\)</span> 次乘加 = <span class="arithmatex">\(2mnk\)</span> FLOP。m16n8k16：2048 次乘加、4096 FLOP。</li>
+<li><strong>片段大小</strong>：A 有 <span class="arithmatex">\(mk\)</span> 个元素分给 32 个线程，每线程 <span class="arithmatex">\(mk/32\)</span> 个；B 每线程 <span class="arithmatex">\(kn/32\)</span>；D 每线程 <span class="arithmatex">\(mn/32\)</span>。</li>
+<li><strong>大矩阵分解</strong>：<span class="arithmatex">\(C_{M \times N} = \sum_{k} A_{:, k\text{-tile}} B_{k\text{-tile}, :}\)</span>，每个 <span class="arithmatex">\(16 \times 8\)</span> 的 C 块沿 K 方向累加 <span class="arithmatex">\(K/16\)</span> 次 MMA。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>WMMA fragment</td>
+<td><code>wmma::fragment&lt;wmma::matrix_a, 16, 16, 16, half, wmma::row_major&gt; a;</code></td>
+</tr>
+<tr>
+<td>WMMA 三步</td>
+<td><code>load_matrix_sync</code> → <code>mma_sync(c, a, b, c)</code> → <code>store_matrix_sync</code></td>
+</tr>
+<tr>
+<td>PTX MMA</td>
+<td><code>mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {d0..d3}, {a0..a3}, {b0,b1}, {c0..c3};</code></td>
+</tr>
+<tr>
+<td>ldmatrix</td>
+<td><code>ldmatrix.sync.aligned.m8n8.x4.shared.b16 {r0,r1,r2,r3}, [addr];</code></td>
+</tr>
+<tr>
+<td>编译目标</td>
+<td><code>nvcc -arch=sm_80</code>（Ampere）/ <code>sm_90a</code>（Hopper wgmma）/ <code>sm_100a</code>（Blackwell tcgen05）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch15_tensor_core_mma.py</code>，配套测试 <code>tests/test_ch13_18.py</code>；同一章的 notebook：<code>notebooks/ch15_tensor_core_mma.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真正的 <code>mma.sync</code> 要 Tensor Core [GPU]；这里只模拟 PTX 规定的片段布局）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch15_tensor_core_mma.py   # 一步一步打印  
+uv run pytest tests/test_ch13_18.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 一条指令</td>
+<td>16 × 8 × 16</td>
+<td><code>M * N * K</code></td>
+<td>2048 次乘加</td>
+</tr>
+<tr>
+<td>第二步 WMMA 片段</td>
+<td>256 / 32</td>
+<td><code>16 * 16 // 32</code></td>
+<td>8 个数</td>
+</tr>
+<tr>
+<td>第三步 每个 lane 拿几个</td>
+<td>A 8、B 4、C/D 4</td>
+<td><code>frag_a(lane)</code>、<code>frag_b</code>、<code>frag_cd</code></td>
+<td>32 个 lane 合起来不重不漏：256、128、128 个位置</td>
+</tr>
+<tr>
+<td>第三步 拆进 lane 再拼回</td>
+<td><span class="arithmatex">\(D = AB + C\)</span></td>
+<td><code>mma_sync(scatter(A, frag_a), …)</code> → <code>gather(…)</code></td>
+<td>和 <code>A @ B + C</code> 完全一样</td>
+</tr>
+<tr>
+<td>第五步 swizzle</td>
+<td>列号 XOR (行号 % 8)</td>
+<td><code>swizzle_chunk(r, 0)</code></td>
+<td>8 行的第 0 块放到 0–7 八个不同位置</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">def frag_a(lane):                       # PTX §9.7.16.5.8：lane 拿 A 的哪 8 个
+    g, t = lane &gt;&gt; 2, lane % 4         # groupID 和 threadID_in_group
+    return [(g, 2*t), (g, 2*t+1), (g+8, 2*t), (g+8, 2*t+1),
+            (g, 2*t+8), (g, 2*t+9), (g+8, 2*t+8), (g+8, 2*t+9)]
+
+regs = scatter(A, frag_a)              # 形状 (32, 8)：32 个 lane 各 8 个寄存器值
+D = gather(d_regs, frag_cd, (16, 8))   # 从 32 个 lane 拼回小矩阵
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>lane &gt;&gt; 2</code> 和 <code>lane % 4</code></strong>：PTX 文档把 32 个 lane 分成 8 组、每组 4 个，groupID 决定行、组内编号决定列；WMMA 不公开这张表，<code>mma.sync</code> 公开。</li>
+<li><strong>寄存器是 32 位的，一个装两个 BF16</strong>：表里 A 的 8 个元素放在 4 个寄存器里，代码只模拟"谁拿哪些元素"，不模拟打包。</li>
+<li><strong>用小整数做测试</strong>：A、B、C 取 −3 到 3 的整数，乘加结果是精确的，所以能用 <code>np.array_equal</code> 而不是容差。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>打印 <code>frag_cd(lane)</code> 看 lane 0、1、4 各拿 D 的哪几个位置，和讲义说的"C 的布局和 A 的前 4 个一样"对一对。</li>
+<li>故意把 <code>frag_b</code> 里的 <code>2 * t + 8</code> 改成 <code>2 * t + 2</code>，看"不重不漏"的检查哪里报错。</li>
+</ul><nav class="pager"><a href="14-sgemm-register-tiling.html">← 第 14 章 · SGEMM ②：寄存器分块、向量化与 warptiling</a><a href="16-async-copy-pipeline.html">第 16 章 · 异步拷贝与多级流水线：搬下一块的时候算这一块 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

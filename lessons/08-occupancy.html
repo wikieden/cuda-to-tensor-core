@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 8 章 · occupancy 与延迟隐藏：一个 SM 上同时养多少个 warp · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="8-occupancy-sm-warp">第 8 章 · occupancy 与延迟隐藏：一个 SM 上同时养多少个 warp</h1><p><a class="btn" href="../animations/08-occupancy.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：一次读显存要等几百个周期，GPU 在这段时间干什么？occupancy（占用率）是什么、怎么算？寄存器、shared memory、block 大小各怎么限制它？occupancy 是不是越高越好？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/07-shared-memory-banks.html">第 7 章 shared memory 与 bank conflict</a> · 下一章：<a href="../lessons/09-roofline-profiling.html">第 9 章 性能分析</a><br />
+对应原文：PG §2.3.7 Kernel Launch and Occupancy（<code>materials/text/cuda-programming-guide.txt</code> 第 4431–4557 行）、§3.2.2.2 Hardware Multithreading（第 8716–8753 行）；Best Practices §11.1–11.4（<code>text/cuda-c-best-practices-guide.txt</code> 第 2305–2474 行）；Gordić「Parallelism vs Concurrency」（<code>text/blog-gordic-inside-nvidia-gpus-matmul.txt</code> 第 75–79 行）</p>
+<p>本章缩写：CC = Compute Capability（计算能力，架构版本号）· ILP = Instruction-Level Parallelism（指令级 / 并行：一个线程内多条互不依赖的指令同时在路上）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-14">第一步：等的时候换人干——延迟隐藏（2026-11-14）</h3>
+<p>Best Practices §11.1 开头一句话说透了：</p>
+<blockquote>
+<p>线程里的指令是按顺序执行的，所以一个 warp 卡住时，<strong>换别的 warp 来执行，是隐藏延迟、让硬件保持忙碌的唯一办法。</strong></p>
+</blockquote>
+<p><strong>类比：洗衣房。</strong> 一台洗衣机（SM 的计算单元）洗一桶要 40 分钟（显存延迟），但往里放衣服只要 1 分钟（发一条指令）。只有一个人用，洗衣机 40 分钟里 39 分钟在等；有 40 个人轮流用，每分钟都有人在放衣服——机器一直在转。</p>
+<p>GPU 正是这样：第 2 章说过 warp 切换<strong>零开销</strong>（寄存器一直留在片上）。每个周期，warp 调度器挑一个"下一条指令准备好了"的 warp 发射。一个 SM 同时<strong>驻留</strong>很多 warp，就总能挑到一个能干活的。</p>
+<p>Gordić 的数字（H100）：一个 SM 每周期最多从 <strong>4 个 warp</strong> 发射指令（4 个象限各一个调度器），也就是同一时刻真正并行的只有 128 个线程；但一个 SM 能<strong>驻留 2048 个线程（64 个 warp）</strong>。多出来的 60 个 warp 不是拿来"同时算"的，是拿来<strong>轮流等</strong>的。</p>
+<h3 id="occupancy-2026-11-14">第二步：occupancy 的定义（2026-11-14）</h3>
+<p>PG §2.3.7：</p>
+<div class="arithmatex">\[\text{occupancy} = \frac{\text{SM 上实际驻留的 warp 数}}{\text{SM 最多能驻留的 warp 数}}\]</div>
+<p>H100 / B200（CC 9.0 / 10.0）每个 SM 最多 64 个 warp（2048 个线程）。</p>
+<p>一个 SM 能放几个 block，取决于<strong>四道门槛里最紧的那一道</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>门槛</th>
+<th>CC 10.0 的上限（PG 表 2）</th>
+<th>一个 block 用多少</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 线程数</td>
+<td>每 SM 2048</td>
+<td>block 大小</td>
+</tr>
+<tr>
+<td>② block 数</td>
+<td>每 SM 32</td>
+<td>1</td>
+</tr>
+<tr>
+<td>③ 寄存器</td>
+<td>每 SM 65536 个</td>
+<td>每线程寄存器数 × block 大小</td>
+</tr>
+<tr>
+<td>④ shared memory</td>
+<td>每 SM 233472 字节（228 KB）</td>
+<td>每 block 用的字节数</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pg-2026-11-14">第三步：照着 PG 算三个例子（2026-11-14）</h3>
+<p><strong>例 1：block 太大</strong>（PG 原例）。<code>&lt;&lt;&lt;512, 768&gt;&gt;&gt;</code>：每个 block 768 个线程。线程门槛：2048 / 768 = 2.67 → <strong>2 个 block</strong>，驻留 1536 个线程。</p>
+<div class="arithmatex">\[\text{occupancy} = \frac{2 \times 768}{2048} = 75\%\]</div>
+<p><strong>例 2：block 太小</strong>（PG 原例）。<code>&lt;&lt;&lt;512, 32&gt;&gt;&gt;</code>：每个 block 只有 32 个线程。线程门槛允许 64 个 block，但 block 门槛只允许 <strong>32 个</strong> → 32 × 32 = 1024 个线程。</p>
+<div class="arithmatex">\[\text{occupancy} = \frac{1024}{2048} = 50\%\]</div>
+<p><strong>例 3：shared memory 卡住</strong>（PG 原例）。每个 block 用 100 KB shared memory：第 3 个 block 需要 300 KB，超过 228 KB → 只能放 <strong>2 个 block</strong>。block 只有 128 个线程的话，occupancy = 256 / 2048 = 12.5%。</p>
+<p><strong>例 4：寄存器卡住</strong>（Best Practices §11.1.1）。CC 7.0，每线程 37 个寄存器，block 128 个线程。寄存器按 warp 分配、<strong>向上取整到 256 的倍数</strong>：37 × 32 = 1184 → 1280 个 / warp。每个 block 4 个 warp = 5120 个寄存器，65536 / 5120 = 12.8 → <strong>12 个 block</strong> = 48 个 warp。</p>
+<div class="arithmatex">\[\text{occupancy} = 48 / 64 = 75\%\]</div>
+<p>想要 100% occupancy，每线程最多只能用 65536 / 2048 = <strong>32 个寄存器</strong>。</p>
+<h3 id="occupancy-2026-11-14_1">第四步：occupancy 不是越高越好（2026-11-14）</h3>
+<p>Best Practices §11.1 原话："Higher occupancy does not always equate to higher performance……However, low occupancy always interferes with the ability to hide memory latency."——<strong>太低一定不好，但高到一定程度后再高就没用了。</strong></p>
+<p>原因是还有第二种隐藏延迟的办法：<strong>让一个线程自己同时有好几件事在路上（ILP）</strong>。</p>
+<pre><code class="language-cpp">// 低 ILP：每次读都要等上一次算完
+for (k...) acc += a[k] * b[k];
+
+// 高 ILP：一个线程同时发出 4 次读，再一起算
+float x0 = a[k], x1 = a[k+1], x2 = a[k+2], x3 = a[k+3];   // 4 次读同时在路上
+acc0 += x0 * ...; acc1 += x1 * ...; ...
+</code></pre>
+<p>高性能 GEMM 的典型做法正好相反于"高 occupancy"：<strong>每个线程用大量寄存器存一大块结果（第 14 章的寄存器分块），occupancy 可能只有 12–25%，但每个 warp 内部的并行度很高</strong>，照样把计算单元喂饱。FlashAttention-3、CUTLASS 的 Hopper kernel 每个 SM 常常只放 1 个 block。</p>
+<p>所以 occupancy 是一个<strong>诊断指标</strong>：kernel 慢、Nsight Compute 显示大量 warp 在等显存（stall long scoreboard）、occupancy 又很低时，才考虑提高它。</p>
+<h3 id="2026-11-14_1">第五步：能调的旋钮（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th>旋钮</th>
+<th>做法</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>block 大小</td>
+<td>128 / 256 常是好起点；配合 occupancy 计算</td>
+<td>—</td>
+</tr>
+<tr>
+<td>寄存器</td>
+<td><code>__launch_bounds__(maxThreads, minBlocks)</code> 或 <code>-maxrregcount</code> 限制</td>
+<td>用超了会 spill 到 local memory（在显存里，第 5 章）</td>
+</tr>
+<tr>
+<td>shared memory</td>
+<td>减小 tile；或用动态 shared 按需申请</td>
+<td>tile 小了复用就少</td>
+</tr>
+<tr>
+<td>让程序自己选</td>
+<td><code>cudaOccupancyMaxPotentialBlockSize</code>、<code>cudaOccupancyMaxActiveBlocksPerMultiprocessor</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>查看</td>
+<td><code>nvcc --resource-usage</code>；Nsight Compute 的 Occupancy 小节和计算器</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>Best Practices 还建议<strong>总是写单参数的 <code>__launch_bounds__(maxThreadsPerBlock)</code></strong>：告诉编译器最多会用多大的 block，避免它给每个线程分太多寄存器，导致"too many resources requested for launch"。</p>
+<h3 id="occupancy">动画演示：四道门槛决定 occupancy</h3>
+<p><img alt="occupancy 计算" src="../animations/08-occupancy.gif" /></p>
+<p>可交互版：<a href="../animations/08-occupancy.html">animations/08-occupancy.html</a>。四个预设：<strong>768 线程</strong>、<strong>32 线程</strong>、<strong>100 KB shared</strong>、<strong>37 寄存器</strong>（正好是第三步的四个例子）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>四根条分别是线程、block 数、寄存器、shared memory 四种资源，按当前设置能放几个 block 就填几格；</li>
+<li>最先填满的那根变红——它就是卡脖子的门槛；</li>
+<li>下方显示驻留 warp 数和 occupancy；</li>
+<li>播放时依次重现 PG 的例 1、例 2、例 3 和 Best Practices 的例 4，也可以直接点预设。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：CC 10.0 的 SM（2048 线程、32 block、65536 寄存器、228 KB shared）。kernel 每个 block 256 个线程、每线程 64 个寄存器、每 block 32 KB shared memory。四道门槛各允许几个 block？occupancy 是多少？（寄存器按"每线程用多少就是多少"算，忽略 256 取整）</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：用洗衣房的比喻解释：为什么 GPU 需要一个 SM 上驻留几十个 warp，而 CPU 一个核心只跑一两个线程？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：一个 GEMM kernel 的 occupancy 只有 12.5%，但跑到了 cuBLAS 的 90%。这说明什么？它靠什么隐藏延迟？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>等的时候换人干：warp 切换不花钱，多养几个 warp 轮流等；<br />
+occupancy = 驻留 warp ÷ 最多 warp；<br />
+四道门槛看最紧：线程、block 数、寄存器、shared；<br />
+太低一定慢，太高不一定快：一个线程多件事在路上（ILP）也能藏延迟。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C18（occupancy 定义与四道门槛；PG 的 768 线程 → 75%、32 线程 → 50% 两个例子）</li>
+<li>C19（延迟隐藏的两种办法：多 warp（TLP）与单线程多指令（ILP）；occupancy 不是越高越好）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §2.3.7</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 4431–4557 行（表 2 与三个例子）</td>
+<td>occupancy 定义、调度器怎么派 block、三个计算例子</td>
+</tr>
+<tr>
+<td>★ Best Practices §11.1–11.4</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 2305–2474 行</td>
+<td>寄存器取整、<code>__launch_bounds__</code>、block 大小经验、shared memory 的影响</td>
+</tr>
+<tr>
+<td>Gordić「Parallelism vs Concurrency」</td>
+<td><code>text/blog-gordic-inside-nvidia-gpus-matmul.txt</code> 第 75–79 行</td>
+<td>每周期 4 个 warp 发射 vs 驻留 64 个 warp</td>
+</tr>
+<tr>
+<td>Hopper tuning guide §4.1.1</td>
+<td><code>text/hopper-tuning-guide.txt</code> 第 141–155 行</td>
+<td>H100 的四道门槛数字</td>
+</tr>
+<tr>
+<td>Vasily Volkov「Better Performance at Lower Occupancy」（GTC 2010）</td>
+<td>在线（〔旧知〕）</td>
+<td>ILP 代替 occupancy 的经典演讲，GEMM 低占用高性能的源头</td>
+</tr>
+<tr>
+<td>Nsight Compute 文档 Occupancy Calculator</td>
+<td><code>docs/nsight-compute-profiling-guide-v2026.3.1.txt</code></td>
+<td>计算器怎么用（第 9 章）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>每 SM 能放的 block 数</strong> <span class="arithmatex">\(= \min\left(\left\lfloor \frac{T_{\max}}{T} \right\rfloor, B_{\max}, \left\lfloor \frac{R_{\max}}{R_{\text{block}}} \right\rfloor, \left\lfloor \frac{S_{\max}}{S_{\text{block}}} \right\rfloor\right)\)</span>；寄存器按 warp 粒度取整，<span class="arithmatex">\(R_{\text{block}} = \lceil T/32 \rceil \cdot \lceil 32R / 256 \rceil \cdot 256\)</span>。</li>
+<li><strong>Little 定律（排队论）</strong>：要让带宽打满，同时在路上的请求数 = 带宽 × 延迟。例：延迟 600 周期、每周期要发 4 个请求才能打满，就需要约 2400 个请求同时在路上——由"驻留 warp 数 × 每个 warp 在路上的请求数"共同提供，这就是 TLP 和 ILP 可以互相替代的原因。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>启动界限</td>
+<td><code>__global__ void __launch_bounds__(256, 2) k(...)</code></td>
+</tr>
+<tr>
+<td>限制寄存器</td>
+<td><code>nvcc -maxrregcount=64</code></td>
+</tr>
+<tr>
+<td>查资源占用</td>
+<td><code>nvcc --resource-usage</code> / <code>-Xptxas -v</code></td>
+</tr>
+<tr>
+<td>查最多能驻留几个 block</td>
+<td><code>cudaOccupancyMaxActiveBlocksPerMultiprocessor(&amp;n, k, blockSize, smemBytes)</code></td>
+</tr>
+<tr>
+<td>让运行时推荐 block 大小</td>
+<td><code>cudaOccupancyMaxPotentialBlockSize(&amp;minGrid, &amp;blockSize, k, smemBytes)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch08_occupancy.py</code>，配套测试 <code>tests/test_ch07_12.py</code>；同一章的 notebook：<code>notebooks/ch08_occupancy.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch08_occupancy.py   # 一步一步打印  
+uv run pytest tests/test_ch07_12.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 洗衣房</td>
+<td>忙的比例 = 人数 × 1 ÷ 40</td>
+<td><code>laundromat(p)</code></td>
+<td>1 人 2.5%，40 人 100%</td>
+</tr>
+<tr>
+<td>第三步 例 1</td>
+<td>2048 / 768</td>
+<td><code>occupancy(768)</code></td>
+<td>2 个 block，卡在线程，75%</td>
+</tr>
+<tr>
+<td>第三步 例 2</td>
+<td>block 数上限 32</td>
+<td><code>occupancy(32)</code></td>
+<td>32 个 block，卡在 block 数，50%</td>
+</tr>
+<tr>
+<td>第三步 例 3</td>
+<td>228 KB / 100 KB</td>
+<td><code>occupancy(128, smem_bytes=100 * 1024)</code></td>
+<td>2 个 block，卡在 shared，12.5%</td>
+</tr>
+<tr>
+<td>第三步 例 4</td>
+<td>37 × 32 = 1184 → 1280</td>
+<td><code>occupancy(128, regs_per_thread=37)</code></td>
+<td>12 个 block，卡在寄存器，75%</td>
+</tr>
+<tr>
+<td>第三步 100% 的条件</td>
+<td>65536 / 2048</td>
+<td><code>LIMITS["regs"] // LIMITS["threads"]</code></td>
+<td>每线程最多 32 个</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">per_warp = math.ceil(regs * 32 / 256) * 256        # 寄存器按 warp 分配，取整到 256
+gates = {&quot;threads&quot;: 2048 // threads, &quot;blocks&quot;: 32,
+         &quot;regs&quot;: 65536 // (warps * per_warp),
+         &quot;smem&quot;: 233472 // smem_bytes}
+worst = min(gates, key=gates.get)                  # 最紧的那道门槛
+occ = gates[worst] * math.ceil(threads / 32) / 64  # 驻留 warp ÷ 最多 warp
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>寄存器要按 warp 取整</strong>：例 4 如果直接算 65536 / (37 × 128) = 13.8，会得到 13 个 block；按 warp 取整到 256 后才是 12 个。函数里的 <code>round_to_256</code> 参数可以关掉取整，对比两种算法。</li>
+<li><strong>shared 的上限用字节</strong>：228 KB = 233472 字节；真实硬件每个 block 还会额外占 1 KB 系统保留的 shared（PG 表里有），这里和讲义一样忽略。</li>
+<li><strong><code>occupancy</code> 只是理论值</strong>：Nsight Compute 里还有"实测 occupancy"，会因为尾部效应、block 提前退出而更低（第 9 章）。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>例 4 里把每线程寄存器从 37 改成 32、40、48，看 block 数和 occupancy 怎么跳变。</li>
+<li>把 <code>round_to_256=False</code> 传进例 4，看结果差在哪。</li>
+</ul><nav class="pager"><a href="07-shared-memory-banks.html">← 第 7 章 · shared memory 与 bank conflict</a><a href="09-roofline-profiling.html">第 9 章 · 性能分析：roofline、正确计时与 Nsight →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 6 章 · 合并访存：一个 warp 一次读显存，要搬几趟 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="6-warp">第 6 章 · 合并访存：一个 warp 一次读显存，要搬几趟</h1><p><a class="btn" href="../animations/06-coalescing.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：32 个线程同时读显存，硬件是一个一个读，还是打包读？为什么"相邻线程读相邻地址"这么重要？跨步读、错位读各浪费多少？矩阵按行读和按列读差多少？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/05-memory-hierarchy.html">第 5 章 内存层级</a> · 下一章：<a href="../lessons/07-shared-memory-banks.html">第 7 章 shared memory 与 bank conflict</a><br />
+对应原文：PG §2.3.4.1 Coalesced Global Memory Access（<code>materials/text/cuda-programming-guide.txt</code> 第 3743–3929 行，含矩阵转置例子）；Best Practices §10.2.1（<code>text/cuda-c-best-practices-guide.txt</code> 第 1400–1574 行）；GPU MODE L8 性能清单（<code>text/gpu-mode-lecture-08-cuda-performance-checklist.txt</code>）</p>
+<p>本章缩写：GMEM = Global MEMory（全局内存，即显存）· LDG = LoaD Global（从全局内存读的 SASS 指令）· SASS = Streaming ASSembler（GPU 真正执行的机器码）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="32-2026-11-14">第一步：显存按 32 字节一块一块地给（2026-11-14）</h3>
+<p>PG §2.3.4.1 第一句："Global memory is accessed via <strong>32-byte</strong> memory transactions."——显存按 <strong>32 字节一块（sector，扇区）</strong> 来读写。线程只要 4 字节的一个 float，硬件也得搬整整 32 字节回来。</p>
+<p><strong>类比：快递按箱发货。</strong> 仓库只按箱发货，一箱 32 字节（8 个 float）。你要 1 个，也得运来一整箱。</p>
+<p>一个 warp 的 32 个线程<strong>同时</strong>发出读请求，硬件把这 32 个地址<strong>合并（coalesce）</strong>：落在同一箱里的请求只运一箱。所以关键问题是：<strong>32 个地址落在几箱里？</strong></p>
+<h3 id="2026-11-14">第二步：三种情况算一算（2026-11-14）</h3>
+<p>每个线程读一个 4 字节 float，warp 一共需要 32 × 4 = <strong>128 字节</strong>有用数据。</p>
+<table>
+<thead>
+<tr>
+<th>访问方式</th>
+<th>代码</th>
+<th>落在几箱</th>
+<th>搬运量</th>
+<th>利用率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 相邻线程读相邻地址</td>
+<td><code>a[i]</code></td>
+<td>128 / 32 = <strong>4 箱</strong></td>
+<td>128 B</td>
+<td><strong>100%</strong></td>
+</tr>
+<tr>
+<td>② 错位：整体平移 1 个 float</td>
+<td><code>a[i + 1]</code></td>
+<td><strong>5 箱</strong>（首尾各跨一箱）</td>
+<td>160 B</td>
+<td>80%</td>
+</tr>
+<tr>
+<td>③ 跨步 2</td>
+<td><code>a[2 * i]</code></td>
+<td>8 箱</td>
+<td>256 B</td>
+<td>50%</td>
+</tr>
+<tr>
+<td>④ 跨步 ≥ 8（间隔 ≥ 32 字节）</td>
+<td><code>a[8 * i]</code>、<code>a[i * n]</code></td>
+<td><strong>32 箱</strong>（每个线程一箱）</td>
+<td>1024 B</td>
+<td><strong>12.5%</strong></td>
+</tr>
+</tbody>
+</table>
+<p>①④ 是 PG 原文的两个例子："perfectly coalesced" 4 次传输、100% 利用；最坏情况 32 × 32 = 1024 字节，利用率 128 / 1024 = 12.5%。② 是 Best Practices §10.2.1.2 的例子：错位让 4 箱变 5 箱。</p>
+<p><strong>跨步 s 的一般公式</strong>（s 个 float 为间隔，s ≤ 8）：32 个线程覆盖 <span class="arithmatex">\(32s\)</span> 个 float = <span class="arithmatex">\(128s\)</span> 字节，即 <span class="arithmatex">\(4s\)</span> 箱；利用率 <span class="arithmatex">\(= 1/s\)</span>。s ≥ 8 之后每个线程独占一箱，利用率停在 1/8。</p>
+<p>两个细节：</p>
+<ul>
+<li><strong>顺序打乱没关系</strong>（Best Practices §10.2.1.1）：只要 32 个地址落在同样那 4 箱里，线程 0 读第 5 个、线程 5 读第 0 个，也还是 4 箱。PG 原话："maximize the ratio of bytes used to bytes transferred"——比的是<strong>用到的字节 ÷ 搬来的字节</strong>。</li>
+<li><strong>错位的实际损失比算出来小</strong>：Best Practices 在 V100 上实测，错位读的带宽是对齐时的约 9/10 而不是 4/5，因为相邻 warp 会用到邻居多搬来的那一箱（L2 / L1 命中）。跨步就没这么幸运了。<code>cudaMalloc</code> 返回的地址至少 256 字节对齐，所以只要下标从 0 开始、block 大小是 32 的倍数，就天然对齐。</li>
+</ul>
+<h3 id="2026-11-14_1">第三步：二维数组——按行还是按列（2026-11-14）</h3>
+<p>C/C++ 的二维数组按<strong>行优先</strong>存：<code>A[r][c]</code> 在内存里的位置是 <code>r * N + c</code>，同一行的元素挨着放。</p>
+<pre><code class="language-cpp">// 每个线程负责一个 (row, col)，threadIdx.x 是 warp 里变化最快的那个
+int col = blockIdx.x * blockDim.x + threadIdx.x;
+int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+out[row * N + col] = in[row * N + col];   // ✅ 相邻线程 col 相邻 → 地址相邻 → 合并
+out[col * N + row] = in[col * N + row];   // ❌ 相邻线程地址相差 N 个 float → 每线程一箱
+</code></pre>
+<p><strong>记住一句</strong>：<strong>让 <code>threadIdx.x</code> 对应内存里变化最快的那个下标（最后一维）。</strong></p>
+<p><strong>矩阵转置</strong>是个躲不开的难题（PG §2.3.4.1.1）：<code>out[c][r] = in[r][c]</code>，读按行合并了，写就必然按列；反过来也一样。解决办法是<strong>先按行读进 shared memory，在 shared memory 里转置，再按行写出去</strong>（PG §2.3.4.2.1）——这需要下一章的 shared memory，还会遇到 bank conflict。</p>
+<h3 id="2026-11-14_2">第四步：一次读更多——向量化（2026-11-14）</h3>
+<p>每个线程一次读 4 字节，一个 warp 一条指令只拿 128 字节。改成每个线程一次读一个 <code>float4</code>（16 字节）：</p>
+<pre><code class="language-cpp">float4 v = reinterpret_cast&lt;const float4*&gt;(a)[i];   // 要求地址 16 字节对齐
+</code></pre>
+<p>一个 warp 一条指令拿 512 字节（16 箱，仍然 100% 利用），<strong>指令数变成 1/4</strong>。编译出来的 SASS 是 <code>LDG.E.128</code>（128 位读）。对于 memory-bound 的 kernel（逐元素运算、归约、norm），这是最便宜的提速手段之一（04 调研 §5.1；Boehm GEMM kernel 6 也用了它）。</p>
+<h3 id="warp-32">动画演示：一个 warp 的 32 个地址落在几箱里</h3>
+<p><img alt="合并访存" src="../animations/06-coalescing.gif" /></p>
+<p>可交互版：<a href="../animations/06-coalescing.html">animations/06-coalescing.html</a>。开关：<strong>跨步</strong>（1 / 2 / 4 / 8 / 32）、<strong>偏移</strong>（0 / 1）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>上面一排是 warp 的 32 个线程，下面是显存，每 8 个 float 框成一箱（32 字节）；</li>
+<li>每个线程连一条线到它要读的地址，被碰到的箱子亮起来；</li>
+<li>右边统计：搬了几箱、搬来多少字节、利用率；</li>
+<li>先看跨步 1 偏移 0（4 箱），再试偏移 1（5 箱）和跨步 8（32 箱）。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：一个 warp 每个线程读一个 <code>double</code>（8 字节），线程 k 读 <code>a[k]</code>。一共要搬几箱（32 字节一箱）？利用率多少？如果改成线程 k 读 <code>a[2k]</code> 呢？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：一个 1024 × 1024 的 float 矩阵，block 是 32 × 8 的二维线程块。下面两种写法哪种合并、哪种不合并？不合并的那种，每个 warp 的读要搬几箱？</p>
+<pre><code class="language-cpp">// 写法 A
+float x = M[threadIdx.x + blockIdx.x * 32][threadIdx.y + blockIdx.y * 8];
+// 写法 B
+float x = M[threadIdx.y + blockIdx.y * 8][threadIdx.x + blockIdx.x * 32];
+</code></pre>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：为什么"32 个线程读的地址顺序打乱了，但都在同样 4 箱里"不影响效率，而"地址整体平移 1 个 float"会影响？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>显存按箱发货，一箱 32 字节；<br />
+warp 一起下单，同箱只运一次；<br />
+相邻线程读相邻地址：4 箱满载；跨步 s：利用率 1/s；隔 32 字节以上：一人一箱，八分之一；<br />
+threadIdx.x 对最后一维；转置靠 shared 中转；一次读 float4，指令省四倍。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C13（合并访存：32 字节一箱；warp 内地址合并；利用率 = 用到的字节 ÷ 搬来的字节；四种情况的箱数）</li>
+<li>C14（二维数组：threadIdx.x 对应最后一维；转置要经过 shared memory）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §2.3.4.1</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 3743–3929 行（Figure 12、13；矩阵转置例子从第 3840 行起）</td>
+<td>32 字节传输、100% 与 12.5% 两个极端、转置为什么难</td>
+</tr>
+<tr>
+<td>★ Best Practices §10.2.1</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 1400–1574 行</td>
+<td>简单 / 错位 / 跨步三种模式、V100 实测带宽</td>
+</tr>
+<tr>
+<td>GPU MODE L8</td>
+<td><code>text/gpu-mode-lecture-08-cuda-performance-checklist.txt</code></td>
+<td>性能清单第一条就是合并访存，有实测</td>
+</tr>
+<tr>
+<td>Boehm SGEMM Kernel 2</td>
+<td><code>text/blog-boehm-cuda-matmul-worklog.txt</code> 第 149–210 行</td>
+<td>只改了线程到元素的映射，就从 309 GFLOP/s 涨到 1987 GFLOP/s（第 13 章细讲）</td>
+</tr>
+<tr>
+<td>Oxford prac3</td>
+<td><code>courses/oxford-cuda-giles/prac3/</code>（laplace3d）</td>
+<td>三维网格上合并访存的实战</td>
+</tr>
+<tr>
+<td>Lei Mao 博客 / How_to_optimize_in_GPU 的 elementwise</td>
+<td>在线</td>
+<td><code>float4</code> 向量化实测</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>箱数</strong>：warp 的 32 个地址 <span class="arithmatex">\(\{a_k\}\)</span>（字节），箱数 = 不同的 <span class="arithmatex">\(\lfloor a_k / 32 \rfloor\)</span> 的个数。</li>
+<li><strong>跨步 s（以 4 字节为单位）</strong>：<span class="arithmatex">\(s \le 8\)</span> 时箱数 <span class="arithmatex">\(= 4s\)</span>（对齐时），利用率 <span class="arithmatex">\(= 1/s\)</span>；<span class="arithmatex">\(s \ge 8\)</span> 时箱数 = 32，利用率 = 1/8。</li>
+<li><strong>错位偏移 o 个 float（0 &lt; o &lt; 8）</strong>：32 个连续 float 跨 <span class="arithmatex">\(\lceil (o + 32)/8 \rceil = 5\)</span> 箱。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>公式 / 代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>行优先下标</td>
+<td><code>A[r][c]</code> ↔ <code>r * N + c</code></td>
+</tr>
+<tr>
+<td>合并的二维映射</td>
+<td><code>col = blockIdx.x * blockDim.x + threadIdx.x</code>，访问 <code>A[row * N + col]</code></td>
+</tr>
+<tr>
+<td>向量化读</td>
+<td><code>float4 v = reinterpret_cast&lt;const float4*&gt;(a)[i];</code>（16 字节对齐）</td>
+</tr>
+<tr>
+<td>有效带宽</td>
+<td>(读字节 + 写字节) ÷ 耗时，和峰值带宽比（Best Practices §9.2.2，第 9 章）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch06_coalescing.py</code>，配套测试 <code>tests/test_ch01_06.py</code>；同一章的 notebook：<code>notebooks/ch06_coalescing.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch06_coalescing.py   # 一步一步打印  
+uv run pytest tests/test_ch01_06.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二步 ①–④</td>
+<td>箱数 = 不同的 ⌊地址 / 32⌋ 的个数</td>
+<td><code>sectors(warp_addrs(stride, offset))</code></td>
+<td>4、5、8、32 箱；100%、80%、50%、12.5%</td>
+</tr>
+<tr>
+<td>第二步 跨步公式</td>
+<td><span class="arithmatex">\(4s\)</span> 箱、利用率 <span class="arithmatex">\(1/s\)</span></td>
+<td><code>[sectors(warp_addrs(s)) for s in range(1, 9)]</code></td>
+<td>[4, 8, …, 32]</td>
+</tr>
+<tr>
+<td>第二步 顺序打乱</td>
+<td>比的是用到 ÷ 搬来</td>
+<td><code>sectors(rng.permutation(warp_addrs(1)))</code></td>
+<td>仍是 4 箱</td>
+</tr>
+<tr>
+<td>第三步 按行 / 按列</td>
+<td><code>r * N + c</code></td>
+<td><code>row_major_addrs(3, tx, 64)</code> / <code>row_major_addrs(tx, 3, 64)</code></td>
+<td>4 箱 vs 32 箱</td>
+</tr>
+<tr>
+<td>第四步 float4</td>
+<td>每线程 16 字节</td>
+<td><code>warp_addrs(1, 0, word=16)</code></td>
+<td>512 B、16 箱、100%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">SECTOR = 32
+def sectors(byte_addrs):                   # 32 个地址落在几箱
+    return len(np.unique(byte_addrs // SECTOR))
+
+t = np.arange(32)                          # 一个 warp 的 32 个线程
+addrs = (t * stride + offset) * 4          # 线程 t 读 a[t * stride + offset]（float）
+utilization = 32 * 4 / (sectors(addrs) * 32)   # 用到的字节 ÷ 搬来的字节
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>地址假设从 0 开始</strong>：<code>warp_addrs</code> 默认数组起点对齐到 32 字节（<code>cudaMalloc</code> 至少 256 字节对齐），所以 <code>a[i]</code> 正好 4 箱；<code>offset = 1</code> 就是错位的情形。</li>
+<li><strong>这里只数箱，不模拟缓存</strong>：讲义说错位读在 V100 上实测只损失约 1/10，因为邻居 warp 会命中 L1 / L2；代码按"每个 warp 单独搬"算，得到的是 4/5，是最坏情况。</li>
+<li><strong><code>np.unique</code> 天然忽略顺序</strong>：所以打乱 32 个地址箱数不变，和 Best Practices §10.2.1.1 说的一样。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>warp_addrs(1, 1)</code> 的偏移换成 2、7、8，看什么时候又回到 4 箱。</li>
+<li>把第三步的 N 从 64 改成 8、16，看按列读要几箱（N × 4 字节小于 32 时会有几个线程挤进同一箱）。</li>
+</ul><nav class="pager"><a href="05-memory-hierarchy.html">← 第 5 章 · GPU 内存层级：寄存器、shared memory、L1 / L2、显存</a><a href="07-shared-memory-banks.html">第 7 章 · shared memory 与 bank conflict →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

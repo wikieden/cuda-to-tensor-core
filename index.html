@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="index.html">CUDA 从线程到 Tensor Core</a>
+<a href="lessons/index.html">讲义目录</a>
+<a href="animations/index.html">动画</a>
+<a href="review.html">复习卡片</a>
+<a href="lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1>CUDA 从线程到 Tensor Core</h1>
+<p class="lead">从一个 for 循环怎么交给成千上万个线程讲起，一步步走到 2026 年 AI kernel 的前沿：线程层级、warp、内存层级、合并访存、occupancy、roofline、GEMM、Tensor Core、Hopper / Blackwell、FlashAttention。共 27 章，每章配一个动画。</p>
+
+<p>每章的结构：本章回答的问题 → 讲解（白话类比 → 公式 → 例子）→ 练习与作答记录 → 口诀 → 复习卡片 → 延伸阅读。</p>
+<p><a class="btn" href="lessons/01-thread-hierarchy.html">从第 1 章开始</a><a class="btn" href="lessons/index.html">讲义目录</a><a class="btn" href="animations/index.html">全部动画</a><a class="btn" href="review.html">复习卡片</a></p>
+<h2>怎么看</h2>
+<ul>
+<li><b>讲义</b>：每章正文里嵌着 GIF 动画，打开就能播放。</li>
+<li><b>可交互动画</b>：章节标题下的"打开本章可交互动画"，或点下面的卡片进入讲义后再打开。按钮：▶ 播放自动演示，→ 单步自己控制节奏，↺ 从头开始；有滑块的可以拖动参数。</li>
+<li><b>复习卡片</b>：先看问题自己答，再点开折叠的答案核对。</li>
+</ul>
+<h2>全部章节</h2>
+<div class="grid"><a class="card" href="lessons/01-thread-hierarchy.html"><img loading="lazy" src="animations/01-thread-index.gif" alt=""><span class="no">第 1 章</span><span class="t">一个 kernel 怎么分给成千上万个线程：grid / block / thread 与全局编号</span></a><a class="card" href="lessons/02-block-scheduling.html"><img loading="lazy" src="animations/02-block-waves.gif" alt=""><span class="no">第 2 章</span><span class="t">block 为什么必须互不依赖：block 怎么被分到 SM 上</span></a><a class="card" href="lessons/03-warp-simt.html"><img loading="lazy" src="animations/03-warp-divergence.gif" alt=""><span class="no">第 3 章</span><span class="t">warp 与 SIMT：32 个线程一起走，分岔了怎么办</span></a><a class="card" href="lessons/04-host-device-program.html"><img loading="lazy" src="animations/04-host-device-timeline.gif" alt=""><span class="no">第 4 章</span><span class="t">一个完整的 CUDA 程序：分配、拷贝、启动、同步、查错</span></a><a class="card" href="lessons/05-memory-hierarchy.html"><img loading="lazy" src="animations/05-memory-hierarchy.gif" alt=""><span class="no">第 5 章</span><span class="t">GPU 内存层级：寄存器、shared memory、L1 / L2、显存</span></a><a class="card" href="lessons/06-coalescing.html"><img loading="lazy" src="animations/06-coalescing.gif" alt=""><span class="no">第 6 章</span><span class="t">合并访存：一个 warp 一次读显存，要搬几趟</span></a><a class="card" href="lessons/07-shared-memory-banks.html"><img loading="lazy" src="animations/07-bank-conflict.gif" alt=""><span class="no">第 7 章</span><span class="t">shared memory 与 bank conflict</span></a><a class="card" href="lessons/08-occupancy.html"><img loading="lazy" src="animations/08-occupancy.gif" alt=""><span class="no">第 8 章</span><span class="t">occupancy 与延迟隐藏：一个 SM 上同时养多少个 warp</span></a><a class="card" href="lessons/09-roofline-profiling.html"><img loading="lazy" src="animations/09-roofline.gif" alt=""><span class="no">第 9 章</span><span class="t">性能分析：roofline、正确计时与 Nsight</span></a><a class="card" href="lessons/10-reduction.html"><img loading="lazy" src="animations/10-reduction-tree.gif" alt=""><span class="no">第 10 章</span><span class="t">归约：一百万个数求和，怎么让一千个线程分着加</span></a><a class="card" href="lessons/11-warp-shuffle-atomics.html"><img loading="lazy" src="animations/11-warp-shuffle.gif" alt=""><span class="no">第 11 章</span><span class="t">warp shuffle 与原子操作：不经过 shared memory 交换数据</span></a><a class="card" href="lessons/12-scan.html"><img loading="lazy" src="animations/12-scan.gif" alt=""><span class="no">第 12 章</span><span class="t">前缀和 scan：每个位置都要&quot;前面所有数的和&quot;</span></a><a class="card" href="lessons/13-sgemm-tiling.html"><img loading="lazy" src="animations/13-gemm-tiling.gif" alt=""><span class="no">第 13 章</span><span class="t">SGEMM ①：从 naive 到 shared memory 分块</span></a><a class="card" href="lessons/14-sgemm-register-tiling.html"><img loading="lazy" src="animations/14-register-tiling.gif" alt=""><span class="no">第 14 章</span><span class="t">SGEMM ②：寄存器分块、向量化与 warptiling</span></a><a class="card" href="lessons/15-tensor-core-mma.html"><img loading="lazy" src="animations/15-mma-fragment.gif" alt=""><span class="no">第 15 章</span><span class="t">Tensor Core：WMMA、mma.sync 与 ldmatrix</span></a><a class="card" href="lessons/16-async-copy-pipeline.html"><img loading="lazy" src="animations/16-async-pipeline.gif" alt=""><span class="no">第 16 章</span><span class="t">异步拷贝与多级流水线：搬下一块的时候算这一块</span></a><a class="card" href="lessons/17-hopper-tma-mbarrier.html"><img loading="lazy" src="animations/17-tma-mbarrier.gif" alt=""><span class="no">第 17 章</span><span class="t">Hopper ①：TMA、mbarrier、cluster 与分布式 shared memory</span></a><a class="card" href="lessons/18-hopper-wgmma-warp-specialization.html"><img loading="lazy" src="animations/18-warp-specialization.gif" alt=""><span class="no">第 18 章</span><span class="t">Hopper ②：wgmma、warp specialization 与 persistent kernel</span></a><a class="card" href="lessons/19-cute-layout.html"><img loading="lazy" src="animations/19-cute-layout.gif" alt=""><span class="no">第 19 章</span><span class="t">CuTe：用 (Shape, Stride) 描述一切数据布局</span></a><a class="card" href="lessons/20-blackwell-tcgen05.html"><img loading="lazy" src="animations/20-tcgen05-tmem.gif" alt=""><span class="no">第 20 章</span><span class="t">Blackwell：tcgen05、Tensor Memory、2-SM MMA 与块缩放低精度</span></a><a class="card" href="lessons/21-online-softmax-fusion.html"><img loading="lazy" src="animations/21-online-softmax.gif" alt=""><span class="no">第 21 章</span><span class="t">online softmax 与算子融合：少读一遍显存就是快</span></a><a class="card" href="lessons/22-flashattention.html"><img loading="lazy" src="animations/22-flashattention.gif" alt=""><span class="no">第 22 章</span><span class="t">FlashAttention：从 FA1 到 FA4，每一代在解决什么瓶颈</span></a><a class="card" href="lessons/23-inference-kernels.html"><img loading="lazy" src="animations/23-paged-kv.gif" alt=""><span class="no">第 23 章</span><span class="t">推理 kernel：decode 为什么是 memory-bound，以及 paged KV、split-KV、MLA、megakernel</span></a><a class="card" href="lessons/24-tile-dsl.html"><img loading="lazy" src="animations/24-simt-vs-tile.gif" alt=""><span class="no">第 24 章</span><span class="t">Tile 模型与 kernel DSL：cuTile、Triton、CuTe DSL、TileLang、Helion</span></a><a class="card" href="lessons/25-compile-deploy.html"><img loading="lazy" src="animations/25-compile-pipeline.gif" alt=""><span class="no">第 25 章</span><span class="t">编译与部署：PTX、cubin、fatbin、JIT，以及 Rust host + C++ kernel</span></a><a class="card" href="lessons/26-streams-graphs-pdl.html"><img loading="lazy" src="animations/26-launch-timeline.gif" alt=""><span class="no">第 26 章</span><span class="t">延迟优化：streams、CUDA Graphs 与 PDL</span></a><a class="card" href="lessons/27-methodology-wrap-up.html"><img loading="lazy" src="animations/27-optimization-flow.gif" alt=""><span class="no">第 27 章</span><span class="t">实战方法论与全书收尾：拿到一个慢 kernel，按什么顺序下手</span></a></div>
+
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

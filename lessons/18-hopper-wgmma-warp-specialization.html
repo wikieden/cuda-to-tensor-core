@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 18 章 · Hopper ②：wgmma、warp specialization 与 persistent kernel · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="18-hopper-2wgmmawarp-specialization-persistent-kernel">第 18 章 · Hopper ②：wgmma、warp specialization 与 persistent kernel</h1><p><a class="btn" href="../animations/18-warp-specialization.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：Hopper 的 Tensor Core 指令 <code>wgmma</code> 和 Ampere 的 <code>mma.sync</code> 有什么不同？为什么要把 block 里的 warp 分成"搬运组"和"计算组"？环形缓冲区 + full / empty 两组 barrier 怎么配合？persistent kernel 解决什么问题？一个 H100 GEMM 怎么从 32 TFLOP/s 做到超过 cuBLAS？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/17-hopper-tma-mbarrier.html">第 17 章 Hopper ①</a> · 下一章：<a href="../lessons/19-cute-layout.html">第 19 章 CuTe</a><br />
+对应原文：Pranjal「Outperforming cuBLAS on H100: a Worklog」（<code>materials/text/blog-pranjal-outperforming-cublas-h100.txt</code> 全文 411 行，Kernel 1–11 在第 98–312 行）；Colfax「Fast Matrix-Multiplication with WGMMA on NVIDIA Hopper GPUs」（<code>text/blog-colfax-hopper-wgmma.txt</code>）；PTX §9.7.17 wgmma（<code>text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code> 第 10053–12039 行）；PG §4.12.1.3 Producer-Consumer Pattern Through Warp Specialization（<code>text/cuda-programming-guide.txt</code> 第 19533–19710 行）、§4.10.7（第 18294–18583 行）；FlashAttention-3 论文 §3.1（<code>text/flashattention-3.txt</code> 第 208–298 行）；GPU MODE L45（<code>text/gpu-mode-lecture-45-outperforming-cublas-on-h100.txt</code>）；Hopper tuning guide §4.1.2（<code>text/hopper-tuning-guide.txt</code> 第 160–185 行）</p>
+<p>本章缩写：wgmma = WarpGroup Matrix Multiply-Accumulate（warpgroup 级矩阵乘累加）· warpgroup（4 个连续 warp，128 个线程）· SS / RS-GEMM = 两个操作数都在 Shared / A 在 Register、B 在 Shared 的矩阵乘（FA3 论文用语）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="wgmma4-warp-2026-11-14">第一步：wgmma——4 个 warp 一起、异步地算（2026-11-14）</h3>
+<p>PTX §9.7.17.1：<strong>warpgroup = 4 个连续的 warp</strong>（首个 warp 的编号是 4 的倍数），128 个线程。Hopper 的 Tensor Core 指令 <code>wgmma.mma_async</code> 让一个 warpgroup 合作算一个 <strong>m64nNk16</strong> 的矩阵乘，N 可以是 8、16、24……256（PTX §9.7.17.2 的形状表）。</p>
+<p>和 <code>mma.sync</code>（第 15 章）比：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>mma.sync</code>（Ampere）</th>
+<th><code>wgmma.mma_async</code>（Hopper）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>合作单位</td>
+<td>1 个 warp</td>
+<td>1 个 warpgroup（4 warp）</td>
+</tr>
+<tr>
+<td>一条指令的大小</td>
+<td>m16n8k16（2048 次乘加）</td>
+<td>最大 m64n256k16（262144 次乘加）</td>
+</tr>
+<tr>
+<td>操作数位置</td>
+<td>A、B 都要先 <code>ldmatrix</code> 进寄存器</td>
+<td><strong>A 在寄存器或 shared，B 必须在 shared</strong>，直接从 shared 读；累加器在寄存器</td>
+</tr>
+<tr>
+<td>同步性</td>
+<td>同步：指令完成才往下走</td>
+<td><strong>异步</strong>：发出后线程继续，用 <code>wgmma.commit_group</code> / <code>wgmma.wait_group</code> 等</td>
+</tr>
+</tbody>
+</table>
+<p>Gordić 的计算（第 760–770 行）：m64n64k16 时，64 × 64 的累加器分给 128 个线程，每个线程拿 64 / 16 × 8 = 32 个 FP32 寄存器。</p>
+<p><strong>B 直接从 shared 读</strong>省掉了 <code>ldmatrix</code>，但要求 shared 里的布局符合 wgmma 的规定（带 swizzle 的"core matrix"排列，Colfax WGMMA 博客 "SMEM layout constraints" 一节）——这正好由 TMA 按 tensor map 里的 swizzle 模式直接写好（第 17 章）。</p>
+<h3 id="pranjal-32-423-tflops2026-11-14">第二步：Pranjal 的前三步——从 32 到 423 TFLOP/s（2026-11-14）</h3>
+<p>H100 SXM 上 cuBLAS BF16 约 <strong>716 TFLOP/s</strong>（Pranjal 第 69 行）。</p>
+<table>
+<thead>
+<tr>
+<th>Kernel</th>
+<th>做了什么</th>
+<th>TFLOP/s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>第 14 章的 warptiling 搬到 BF16（CUDA core）</td>
+<td>32</td>
+</tr>
+<tr>
+<td>2</td>
+<td>换成 <strong>TMA + wgmma + barrier</strong></td>
+<td>317</td>
+</tr>
+<tr>
+<td>3</td>
+<td>更大的输出 tile：BM = BN = 128、BK = 64，用 m64n128k16</td>
+<td>423</td>
+</tr>
+</tbody>
+</table>
+<p>Kernel 2 一下子快 10 倍——这就是 Tensor Core 和 CUDA core 的差距（第 15 章）。Kernel 3 的经验："It is always better to use the largest available instruction and set BN = WGMMA_N"——指令越大，每条指令的固定开销占比越小。</p>
+<h3 id="warp-specialization2026-11-14">第三步：warp specialization——搬运组和计算组分开（2026-11-14）</h3>
+<p>Kernel 3 里同一个 warpgroup 既发 TMA、又等数据、又算 wgmma，"搬"和"算"还是串着的。第 16 章的多级流水线可以解决，但在 Hopper 上有更彻底的办法——<strong>warp specialization（warp 专业化）</strong>。Hopper tuning guide §4.1.2 把它列为 TMA 的好处之一："Enables users to write warp specialized codes, where specific warps specialize on data movement……while other warps only work on local data within the SM."</p>
+<p>Pranjal Kernel 4 把它讲成<strong>生产者–消费者问题</strong>：</p>
+<ul>
+<li><strong>生产者 warpgroup</strong>：只负责发 TMA，把 A、B 的 tile 一块块搬进<strong>环形缓冲区</strong>（circular buffer，QSIZE 个 slot）；</li>
+<li><strong>消费者 warpgroup</strong>：只负责等数据、做 wgmma；</li>
+<li>两组 barrier 协调：</li>
+<li><code>full[i]</code>："slot i 装满了"——生产者（TMA 搬完）arrive，消费者 wait；</li>
+<li><code>empty[i]</code>："slot i 用完了"——消费者 arrive，生产者 wait。</li>
+</ul>
+<pre><code>生产者：                                 消费者：
+for k:                                   for k:
+  i = k % QSIZE                            i = k % QSIZE
+  empty[i].wait()      ← 等 slot 空          full[i].wait()       ← 等 slot 满
+  TMA 搬 A_k, B_k → slot i                   wgmma 用 slot i
+  (TMA 完成时 full[i] 自动记账)              empty[i].arrive()   → 通知 slot 空了
+</code></pre>
+<p>初始化时让生产者"以为所有 slot 都是空的"。两边以各自的速度跑，谁快了就等对方——和工厂里的传送带一模一样。</p>
+<p>结果：<strong>498 TFLOP/s</strong>（128 × 128 tile，QSIZE = 5）。</p>
+<h3 id="2026-11-14">第四步：寄存器再分配与两个消费者（2026-11-14）</h3>
+<p>Kernel 5 想把输出 tile 做到 128 × 256，结果<strong>掉到 123 TFLOP/s</strong>：一个 warpgroup 128 个线程要放 128 × 256 = 32768 个累加器，每个线程 256 个——已经超过每线程 255 个寄存器的上限（第 5 章），溢出到 local memory。</p>
+<p>解决办法：</p>
+<ol>
+<li><strong>两个消费者 warpgroup</strong>，各算 64 × 256 的一半：block 有 3 个 warpgroup（1 生产 + 2 消费），<strong>610 TFLOP/s</strong>；</li>
+<li><strong>寄存器再分配</strong>（<code>setmaxnreg</code>）：生产者只发 TMA，根本用不了多少寄存器；把它的寄存器上限压到 24，消费者提到 240（240 × 128 × 2 + 24 × 128 = 64512 ≤ 65536），<strong>631 TFLOP/s</strong>。FlashAttention-3 算法 1 第 3、12 行做的是同一件事："Deallocate / Reallocate predetermined number of registers"。</li>
+</ol>
+<h3 id="persistent-kernel-2026-11-14">第五步：persistent kernel 与调度顺序（2026-11-14）</h3>
+<p>Kernel 6 起的思路：<strong>只启动 132 个 block（= SM 数），每个 block 循环处理多个输出 tile</strong>，这叫 <strong>persistent kernel（常驻 kernel）</strong>。好处：</p>
+<ul>
+<li>算完一个 tile 写回结果时（store 要几千个周期），生产者已经开始搬<strong>下一个 tile</strong>的数据——store 的延迟被藏起来；</li>
+<li>没有第 2 章的"最后一波不满"问题，可以自己决定 tile 分配；</li>
+<li>可以<strong>控制 tile 的处理顺序</strong>来提高 L2 命中：Pranjal 把 tile 按 16 × 8 的组排，L2 命中率 83%（cuBLAS 70%），<strong>660 TFLOP/s</strong>；最后用 <strong>Hilbert 曲线</strong>排 tile，再涨 1%。</li>
+</ul>
+<p>一个反直觉的细节（第 226 行）：用 128 个 SM 反而比用满 132 个快（655 vs 660），因为 tile 正好整除成 16 × 8 的组。</p>
+<h3 id="2026-11-14_1">第六步：剩下的几步与全景（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th>Kernel</th>
+<th>改动</th>
+<th>TFLOP/s</th>
+<th>相对 cuBLAS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>CUDA core warptiling</td>
+<td>32</td>
+<td>4%</td>
+</tr>
+<tr>
+<td>2</td>
+<td>TMA + wgmma</td>
+<td>317</td>
+<td>44%</td>
+</tr>
+<tr>
+<td>3</td>
+<td>大 tile、大指令</td>
+<td>423</td>
+<td>59%</td>
+</tr>
+<tr>
+<td>4</td>
+<td>warp specialization</td>
+<td>498</td>
+<td>70%</td>
+</tr>
+<tr>
+<td>5</td>
+<td>2 个消费者 + 寄存器再分配</td>
+<td>631</td>
+<td>88%</td>
+</tr>
+<tr>
+<td>6</td>
+<td>persistent + tile 分组提高 L2 命中</td>
+<td>660</td>
+<td>92%</td>
+</tr>
+<tr>
+<td>7</td>
+<td>更快的 barrier API</td>
+<td>704</td>
+<td>98%</td>
+</tr>
+<tr>
+<td>8</td>
+<td>thread block cluster（TMA multicast）</td>
+<td>734</td>
+<td>102%</td>
+</tr>
+<tr>
+<td>9–10</td>
+<td>微优化、异步 store</td>
+<td>758</td>
+<td>106%</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Hilbert 曲线排 tile</td>
+<td>764</td>
+<td>107%</td>
+</tr>
+</tbody>
+</table>
+<p>（数字来自 Pranjal 博客第 100–312 行，H100 SXM、BF16。超过 cuBLAS 是在他测的特定尺寸上，不代表所有尺寸。）</p>
+<p><strong>FlashAttention-3 用的是同一套结构</strong>（论文 §3.1、算法 1）：生产者 warpgroup 用 TMA 把 K、V 块装进 s 级环形缓冲区，消费者 warpgroup 做两次 GEMM（QKᵀ 和 PV）加 softmax；论文还加了"乒乓调度"——两个消费者 warpgroup 错开，一个算 softmax 时另一个用 Tensor Core（第 22 章）。</p>
+<h3 id="_2">动画演示：生产者–消费者环形缓冲区</h3>
+<p><img alt="warp specialization" src="../animations/18-warp-specialization.gif" /></p>
+<p>可交互版：<a href="../animations/18-warp-specialization.html">animations/18-warp-specialization.html</a>。开关：<strong>slot 数</strong>（2 / 4）、<strong>谁更快</strong>（生产者快 / 消费者快）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>中间是一圈环形缓冲区，每个 slot 标着"空 / 搬运中 / 满 / 计算中"；</li>
+<li>左边生产者每一帧拿一个空 slot 发 TMA，右边消费者拿一个满 slot 做 wgmma；</li>
+<li>每个 slot 旁边两个小灯：full 和 empty barrier 的状态；</li>
+<li>调成"生产者快"，看缓冲区很快被装满、生产者开始等 empty；调成"消费者快"，看消费者等 full。</li>
+</ol>
+<h2 id="_3">练习与作答记录</h2>
+<p><strong>题 1</strong>：wgmma m64n256k16、累加器 FP32。一个 warpgroup 每个线程要多少个寄存器放累加器？为什么 Pranjal 的 128 × 256 输出 tile 用一个消费者 warpgroup 时性能暴跌？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：环形缓冲区 QSIZE = 3。按顺序写出生产者处理第 0、1、2、3 块时分别要等哪个 barrier、写进哪个 slot；消费者处理第 0 块完成后要做什么，才能让生产者搬第 3 块？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：persistent kernel 只启动 132 个 block。和"每个输出 tile 一个 block"相比，它在 store 延迟、尾部效应、L2 命中三方面各有什么好处？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_4">口诀</h2>
+<blockquote>
+<p>wgmma：四个 warp 一起、一条指令一大块、B 直接从 shared 读、发了就走；<br />
+分工：搬运组只发 TMA，计算组只做 wgmma；<br />
+环形传送带两盏灯：full 亮了消费者拿，empty 亮了生产者装；<br />
+寄存器劫贫济富：搬运组只留 24 个，计算组拿 240 个；<br />
+常驻 132 个 block 循环干：store 时就搬下一块，tile 排好顺序吃 L2。</p>
+</blockquote>
+<h2 id="_5">本章复习卡片</h2>
+<ul>
+<li>C42（wgmma 与 mma.sync 的四点不同：warpgroup、m64nNk16、B 在 shared、异步）</li>
+<li>C43（warp specialization：生产者 / 消费者 warpgroup、环形缓冲区、full / empty barrier、<code>setmaxnreg</code> 寄存器再分配）</li>
+<li>C44（persistent kernel：block 数 = SM 数、循环取 tile；藏 store 延迟、消尾部、控制 tile 顺序提高 L2 命中）</li>
+</ul>
+<h2 id="_6">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_7">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ Pranjal「Outperforming cuBLAS on H100」</td>
+<td><code>text/blog-pranjal-outperforming-cublas-h100.txt</code> 第 98–312 行</td>
+<td>本章主线，每一步的代码与 profiling</td>
+</tr>
+<tr>
+<td>★ Colfax WGMMA 教程</td>
+<td><code>text/blog-colfax-hopper-wgmma.txt</code>（WGMMA 第 43 行、SMEM 布局约束第 151 行、同步第 315 行、core matrices 第 362 行）</td>
+<td>用 CuTe 写 wgmma 的细节</td>
+</tr>
+<tr>
+<td>★ FlashAttention-3 §3.1–3.2</td>
+<td><code>text/flashattention-3.txt</code> 第 208–369 行</td>
+<td>warp specialization + 乒乓调度 + GEMM / softmax 重叠</td>
+</tr>
+<tr>
+<td>PTX §9.7.17</td>
+<td><code>text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code> 第 10053–12039 行</td>
+<td>warpgroup 定义、形状表、<code>wgmma.fence</code> / <code>commit_group</code> / <code>wait_group</code></td>
+</tr>
+<tr>
+<td>PG §4.12.1.3、§4.10.7</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 19533–19710、18294–18583 行</td>
+<td>官方的 warp specialization 例子</td>
+</tr>
+<tr>
+<td>GPU MODE L45</td>
+<td><code>text/gpu-mode-lecture-45-outperforming-cublas-on-h100.txt</code></td>
+<td>Pranjal 本人的讲座字幕</td>
+</tr>
+<tr>
+<td>gau-nernst「tcgen05 for dummies」Warp specialization / Persistent kernel 两节</td>
+<td><code>text/blog-gau-nernst-tcgen05-for-dummies.txt</code> 第 793–917、992–1066 行</td>
+<td>同一套结构在 Blackwell 上（第 20 章）</td>
+</tr>
+<tr>
+<td><code>code/fast-cu/</code></td>
+<td>Pranjal 的代码</td>
+<td>M5 里程碑对照</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_8">数学原理</h3>
+<ul>
+<li><strong>wgmma 累加器寄存器</strong>：m64nN 的 FP32 累加器有 <span class="arithmatex">\(64N\)</span> 个数，分给 128 个线程，每线程 <span class="arithmatex">\(N/2\)</span> 个寄存器；N = 256 时为 128 个——再加上 A 的寄存器和地址变量，接近 255 的上限。</li>
+<li><strong>寄存器预算</strong>：<span class="arithmatex">\(R_{\text{prod}} \cdot 128 + R_{\text{cons}} \cdot 128 \cdot n_{\text{cons}} \le 65536\)</span>。</li>
+<li><strong>环形缓冲区所需 slot 数</strong>：要藏住一次 TMA 的延迟 <span class="arithmatex">\(L\)</span>，slot 数 <span class="arithmatex">\(\ge 1 + L / t_{\text{wgmma}}\)</span>（Little 定律）；但 shared memory 有限，大 tile 时只能少开几个 slot（Pranjal 从 5 降到 3）。</li>
+</ul>
+<h3 id="_9">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>wgmma</td>
+<td><code>wgmma.mma_async.sync.aligned.m64n128k16.f32.bf16.bf16 {d...}, descA, descB, ...;</code></td>
+</tr>
+<tr>
+<td>wgmma 同步</td>
+<td><code>wgmma.fence.sync.aligned;</code> → 若干 <code>wgmma.mma_async</code> → <code>wgmma.commit_group.sync.aligned;</code> → <code>wgmma.wait_group.sync.aligned N;</code></td>
+</tr>
+<tr>
+<td>寄存器再分配</td>
+<td><code>setmaxnreg.dec.sync.aligned.u32 24;</code>（生产者） / <code>setmaxnreg.inc.sync.aligned.u32 240;</code>（消费者）</td>
+</tr>
+<tr>
+<td>生产者循环</td>
+<td><code>empty[i].wait(); arrive.expect_tx(full[i], bytes); TMA(A_k, B_k → slot i, full[i]);</code></td>
+</tr>
+<tr>
+<td>消费者循环</td>
+<td><code>full[i].wait(); wgmma(slot i); empty[i].arrive();</code></td>
+</tr>
+<tr>
+<td>编译目标</td>
+<td><code>-arch=sm_90a</code>（wgmma、setmaxnreg 只在 <code>sm_90a</code> 上可用）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_10">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch18_warp_specialization.py</code>，配套测试 <code>tests/test_ch13_18.py</code>；同一章的 notebook：<code>notebooks/ch18_warp_specialization.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（wgmma / setmaxnreg 要 sm_90a 的 GPU [GPU]；这里只算寄存器账和模拟环形缓冲区）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch18_warp_specialization.py   # 一步一步打印  
+uv run pytest tests/test_ch13_18.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 m64n64 累加器</td>
+<td>64 × 64 ÷ 128</td>
+<td><code>accum_regs_per_thread(64, 64)</code></td>
+<td>每线程 32 个</td>
+</tr>
+<tr>
+<td>第三步 生产者 / 消费者</td>
+<td>full / empty 两组 barrier</td>
+<td><code>run_ring(20, 5, 2, 1)</code></td>
+<td>消费者按顺序拿到 20 块；生产者快时要等 empty</td>
+</tr>
+<tr>
+<td>第四步 128 × 256 一个消费者</td>
+<td>32768 ÷ 128</td>
+<td><code>accum_regs_per_thread(128, 256)</code></td>
+<td>256 &gt; 255，溢出</td>
+</tr>
+<tr>
+<td>第四步 寄存器再分配</td>
+<td>240 × 128 × 2 + 24 × 128</td>
+<td><code>register_budget(24, 240)</code></td>
+<td>64512 ≤ 65536</td>
+</tr>
+<tr>
+<td>第六步 全景</td>
+<td>÷ cuBLAS 716</td>
+<td><code>PRANJAL</code></td>
+<td>4% → 107%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">i = produced % qsize
+if not empty[i]: break        # empty[i].wait()：slot 还没用完，生产者等
+slots[i] = produced           # TMA 搬 A_k、B_k → slot i
+full[i] = True                # TMA 完成时 full[i] 自动记账
+
+i = consumed % qsize
+if not full[i]: break         # full[i].wait()：数据还没到，消费者等
+got.append(slots[i])          # wgmma 用 slot i
+empty[i] = True               # empty[i].arrive()
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>empty</code> 初始全是 True</strong>：对应讲义说的"初始化时让生产者以为所有 slot 都是空的"，否则第一块谁也开始不了。</li>
+<li><strong>"一拍"是编的时间单位</strong>：<code>producer_speed=2</code> 表示生产者每拍能装两块；只用来看"谁快谁等"，不对应真实周期。</li>
+<li><strong>Kernel 8 算出来是 102.5%</strong>：734 / 716 = 1.025，讲义表写 102%（截断），测试按 102–103 之间核对。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>run_ring</code> 的 QSIZE 从 5 改成 1、2，生产者快的时候看它等了多少拍。</li>
+<li>用 <code>register_budget</code> 试试生产者留 40 个、消费者 232 个，看还放不放得下。</li>
+</ul><nav class="pager"><a href="17-hopper-tma-mbarrier.html">← 第 17 章 · Hopper ①：TMA、mbarrier、cluster 与分布式 shared memory</a><a href="19-cute-layout.html">第 19 章 · CuTe：用 (Shape, Stride) 描述一切数据布局 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 20 章 · Blackwell：tcgen05、Tensor Memory、2-SM MMA 与块缩放低精度 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="20-blackwelltcgen05tensor-memory2-sm-mma">第 20 章 · Blackwell：tcgen05、Tensor Memory、2-SM MMA 与块缩放低精度</h1><p><a class="btn" href="../animations/20-tcgen05-tmem.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：Hopper 的 GEMM 代码为什么在 Blackwell 上直接跑不了？Tensor Memory（TMEM）是什么，为什么累加器不放寄存器了？"一个线程发起 MMA"意味着什么？两个 SM 怎么合作算一个 MMA？NVFP4、MXFP8 这些"块缩放"格式是怎么回事？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/19-cute-layout.html">第 19 章 CuTe</a> · 下一章：<a href="../lessons/21-online-softmax-fusion.html">第 21 章 online softmax 与算子融合</a><br />
+对应原文：PTX §9.7.18 TensorCore 5th Generation（<code>materials/text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code> 第 12040–17350 行：§9.7.18.1 Tensor Memory 第 12040 行、§9.7.18.5 Issue Granularity 第 13135 行、§9.7.18.7 分配第 13604 行、§9.7.18.10 MMA 第 14425 行）、§9.7.16.3 Block Scaling（第 4764 行）；Colfax「Writing GEMM Kernels Using Tensor Memory For NVIDIA Blackwell GPUs」（<code>text/blog-colfax-blackwell-tmem-gemm.txt</code> 第 43–127 行）；gau-nernst「tcgen05 for dummies」（<code>text/blog-gau-nernst-tcgen05-for-dummies.txt</code>，2-SM MMA 第 918–991 行）；Blackwell tuning guide（<code>text/blackwell-tuning-guide.txt</code>）</p>
+<p>本章缩写：tcgen05 = TensorCore generation 5（第 5 代 Tensor Core 指令族）· TMEM = Tensor MEMory（张量内存）· UMMA = CUTLASS 对 tcgen05.mma 的叫法（Universal / Unified MMA）· CTA pair（同一 cluster 里相邻的两个 block）· FP4 / FP6 / FP8 = 4 / 6 / 8 位浮点 · E2M1 / E4M3 = 2 位指数 1 位尾数 / 4 位指数 3 位尾数 · MX = Microscaling（OCP 标准的微缩放格式，32 个元素共享一个 E8M0 缩放因子）· NVFP4 = NVIDIA FP4（16 个 E2M1 元素共享一个 E4M3 缩放因子）· UE8M0 = 无符号 8 位指数、0 位尾数（只能表示 2 的幂）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="wgmma-2026-11-14">第一步：wgmma 没了（2026-11-14）</h3>
+<p>Colfax 博客第一句："If you try to run a CUTLASS Hopper GEMM kernel on a Blackwell GPU……it doesn't work. The Hopper WGMMA instruction……has been deprecated on Blackwell." 取而代之的是 <strong><code>tcgen05.mma</code></strong>。和 wgmma 比，四个大变化（Colfax 第 47–52 行）：</p>
+<ol>
+<li>支持 <strong>FP4、FP6</strong> 等更低精度，各精度吞吐都更高；</li>
+<li><strong>内建块缩放（block scaling）</strong>；</li>
+<li>累加器放在 Tensor Core 专用的 <strong>Tensor Memory（TMEM）</strong> 里，不再占寄存器；</li>
+<li><strong>两个相邻 CTA 可以跨两个 SM 合作做一个 MMA</strong>；而且<strong>只需要一个线程发起</strong>。</li>
+</ol>
+<h3 id="tensor-memorytensor-core-2026-11-14">第二步：Tensor Memory——Tensor Core 自己的台面（2026-11-14）</h3>
+<p>PTX §9.7.18.1：TMEM 是 5 代 Tensor Core 专用的片上存储，<strong>每个 CTA 128 行（lane）× 512 列，每格 32 位</strong>——即 256 KB / SM（Colfax 第 72 行）。</p>
+<p>为什么要它？回忆第 18 章：Hopper 上 128 × 256 的 FP32 累加器放在寄存器里，每线程 256 个，直接撞到 255 的上限，不得不拆成两个 warpgroup、再做寄存器再分配。<strong>TMEM 把累加器从寄存器里搬走</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>wgmma（Hopper）</th>
+<th>tcgen05.mma（Blackwell）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>寄存器或 shared</td>
+<td>TMEM 或 shared</td>
+</tr>
+<tr>
+<td>B</td>
+<td>shared</td>
+<td>shared</td>
+</tr>
+<tr>
+<td>累加器 D</td>
+<td><strong>寄存器</strong>（拆散在 128 个线程里）</td>
+<td><strong>TMEM</strong>（透明的行优先格式）</td>
+</tr>
+<tr>
+<td>谁发起</td>
+<td>一个 warpgroup 128 个线程</td>
+<td><strong>一个线程</strong></td>
+</tr>
+</tbody>
+</table>
+<p>几个规矩（PTX §9.7.18.1.2、Colfax）：</p>
+<ul>
+<li>TMEM 要<strong>动态分配</strong>：一个 warp 用 <code>tcgen05.alloc</code> 申请，以<strong>列</strong>为单位，至少 32 列、必须是 2 的幂；kernel 结束前必须 <code>tcgen05.dealloc</code>；</li>
+<li>数据进出 TMEM 的方式很有限：MMA 把结果写进去；<code>tcgen05.ld</code> 把结果读到寄存器做后处理（epilogue）；<code>tcgen05.cp</code> / <code>tcgen05.st</code> 从 shared / 寄存器写进去。<strong>除了这些指令，没有别的东西能访问 TMEM</strong>；</li>
+<li>每个 warp 只能访问 TMEM 的 ¼（32 个 lane），所以读出累加器时 4 个 warp 各读一部分。</li>
+</ul>
+<p><strong>意义</strong>：Colfax 的总结——"continue a trend of replacing general-purpose computational resources by specialized hardware"。Volta 用 Tensor Core 把乘加从 CUDA core 拿走；Hopper 用 TMA 把搬运从线程拿走；Blackwell 用 TMEM 把累加器从寄存器拿走、用单线程发起把 MMA 指令也从 warpgroup 拿走。<strong>线程越来越只负责"协调"</strong>。</p>
+<h3 id="2026-11-14">第三步：一个线程发起，其余线程干什么（2026-11-14）</h3>
+<p>PTX §9.7.18.5 Issue Granularity：因为 MMA 的所有操作数都在 CTA 共享的空间（shared、TMEM）里，<code>tcgen05.mma</code> "can and must be issued by a single thread"（Colfax）。</p>
+<p>于是 Blackwell GEMM 的典型分工（gau-nernst 博客的 warp specialization 一节）：</p>
+<table>
+<thead>
+<tr>
+<th>warp</th>
+<th>干什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TMA warp（1 个线程实际干活）</td>
+<td>发 TMA 把 A、B 搬进 shared 环形缓冲区</td>
+</tr>
+<tr>
+<td>MMA warp（1 个线程实际干活）</td>
+<td>等数据，发 <code>tcgen05.mma</code>，完成时通过 <code>tcgen05.commit</code> 在 mbarrier 上通知</td>
+</tr>
+<tr>
+<td>epilogue warps（4 个 warp）</td>
+<td>等 MMA 全部完成，<code>tcgen05.ld</code> 读出累加器、加 bias / 激活 / 量化、写回显存</td>
+</tr>
+</tbody>
+</table>
+<p>和第 18 章一样是生产者–消费者，只是"消费者"从一整个 warpgroup 缩成了一个线程，寄存器压力几乎消失。</p>
+<h3 id="2-sm-mma-sm-mma2026-11-14">第四步：2-SM MMA——两个 SM 拼一个大 MMA（2026-11-14）</h3>
+<p><code>tcgen05.mma.cta_group::2</code>：cluster 里相邻的两个 CTA（<strong>CTA pair</strong>，在两个 SM 上）合作做一个 MMA。gau-nernst 博客第 918 行起的说明：</p>
+<ul>
+<li>每个 CTA 提供 A tile 和 B tile 的<strong>一半</strong>，也各自保存一半的输出；</li>
+<li>MMA 的 M 最大到 <strong>256</strong>（单 SM 是 128）；</li>
+<li>仍然只要<strong>一个 CTA 里的一个线程</strong>发起。</li>
+</ul>
+<p>好处：一个 SM 的 shared memory 只需要放一半的 B，同样的 shared 预算可以用更大的 tile，算术强度更高（第 14 章：tile 越大，每字节显存流量做的乘加越多）。</p>
+<h3 id="2026-11-14_1">第五步：块缩放的低精度格式（2026-11-14）</h3>
+<p>FP8 的 E4M3 只能表示约 ±448 的数，FP4（E2M1）只有 16 个可能的值。直接把一个张量整体转成 FP4，动态范围远远不够。办法是<strong>分块缩放</strong>：每一小块元素共享一个缩放因子，</p>
+<div class="arithmatex">\[x \approx \text{scale}_{\text{block}} \times q, \quad q \in \text{低精度格式}\]</div>
+<p>PTX §9.7.16.3 把它写进了 MMA 指令本身："D = (A × scale_A) × (B × scale_B) + C"——A 的每一行沿 K 方向切成几段，每段乘一个缩放因子。按 PTX 表 46 的组合：</p>
+<table>
+<thead>
+<tr>
+<th>格式</th>
+<th>元素类型</th>
+<th>每块几个元素</th>
+<th>缩放因子类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MXFP8</td>
+<td>E4M3 / E5M2</td>
+<td>32</td>
+<td>UE8M0（2 的幂）</td>
+</tr>
+<tr>
+<td>MXFP4</td>
+<td>E2M1</td>
+<td>32</td>
+<td>UE8M0</td>
+</tr>
+<tr>
+<td><strong>NVFP4</strong></td>
+<td>E2M1</td>
+<td><strong>16</strong></td>
+<td><strong>UE4M3</strong>（FP8，可以不是 2 的幂）</td>
+</tr>
+</tbody>
+</table>
+<p>（块大小按 <code>mma.sync</code> 的 K = 64 / scale_vec 推算：2X → 32 个一块，4X → 16 个一块；与 OCP MX 规范、NVIDIA 公开的 NVFP4 说明一致〔旧知〕。）</p>
+<p>NVFP4 用更小的块和更精细的缩放因子，换来比 MXFP4 更好的精度。<strong>缩放在 Tensor Core 里硬件完成</strong>，kernel 不用手动乘回去。DeepGEMM 的 FP8 细粒度缩放、GPU MODE 2026 年初的 NVFP4 hackathon（04 调研 §2.1）都围绕这一点。</p>
+<h3 id="b200-blackwell2026-11-14">第六步：B200 的数字与消费级 Blackwell（2026-11-14）</h3>
+<p>Blackwell tuning guide（第 136–230 行）：</p>
+<ul>
+<li>CC 10.0（B200）：每 SM 最多 64 个 warp、shared memory 228 KB（单 block 227 KB），和 H100 一样；GB200 的 L2 是 126 MB；</li>
+<li>CC 12.0（RTX 50 系列等消费级 Blackwell）：每 SM 最多 48 个 warp，shared memory 只有 128 KB（单 block 99 KB）。<strong>消费级 Blackwell 没有 tcgen05 / TMEM</strong>（〔旧知〕；它的 Tensor Core 指令更接近 <code>mma.sync</code> 加块缩放），所以数据中心 Blackwell 的 kernel 不能直接拿到 RTX 50 上跑——Quack 同时支持两者是分别写的。</li>
+</ul>
+<h3 id="blackwell-gemm-stage">动画演示：Blackwell 的一个 GEMM stage</h3>
+<p><img alt="tcgen05 与 TMEM" src="../animations/20-tcgen05-tmem.gif" /></p>
+<p>可交互版：<a href="../animations/20-tcgen05-tmem.html">animations/20-tcgen05-tmem.html</a>。开关：<strong>架构</strong>（Hopper wgmma / Blackwell tcgen05）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>画面上有 TMA warp、MMA warp（或 Hopper 的消费者 warpgroup）、shared 环形缓冲区、累加器；</li>
+<li>Hopper 模式：累加器拆在 128 个线程的寄存器里（一片小格子），每个线程的寄存器条快满了；</li>
+<li>Blackwell 模式：只有 1 个线程发出 MMA，累加器整块在 TMEM 的 128 × 512 网格里，线程寄存器几乎是空的；</li>
+<li>最后一帧：epilogue warp 用 <code>tcgen05.ld</code> 把累加器分 4 份读出来。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：一个 128 × 256 的 FP32 累加器要占 TMEM 的多少列？（TMEM 每行 512 列、每格 32 位、128 行）分配时要申请多少列？同一个 CTA 还能再放几个这样的累加器（比如做双缓冲）？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：用自己的话说，从 Volta 到 Blackwell，"线程"的职责一代代被什么硬件接手了？列出至少三步。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：NVFP4 一块 16 个 E2M1 元素加一个 E4M3 缩放因子。平均每个元素占多少位？和 MXFP4（32 个元素共享一个 8 位缩放因子）比呢？为什么 NVFP4 愿意多花这点空间？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>Blackwell 不认 wgmma，换成 tcgen05；<br />
+累加器搬进 TMEM：128 行 512 列，按列申请、用完归还，只能 ld 出来再加工；<br />
+一个线程发 MMA，搬运一个线程、计算一个线程，其余线程做收尾；<br />
+两个 SM 拼成一对，M 能到 256；<br />
+低精度靠分块缩放：MX 三十二个一块、二的幂；NVFP4 十六个一块、FP8 缩放，Tensor Core 自动乘回去。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C47（tcgen05 与 wgmma 的四点不同：低精度 + 块缩放、TMEM 累加器、单线程发起、2-SM MMA）</li>
+<li>C48（TMEM：128 lane × 512 列 × 32 位 / CTA；alloc 按列（≥ 32、2 的幂）；只能经 MMA / tcgen05.ld / cp / st 访问）</li>
+<li>C49（块缩放格式：MXFP8 / MXFP4 32 个一块 UE8M0；NVFP4 16 个一块 UE4M3）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ Colfax Blackwell TMEM 教程</td>
+<td><code>text/blog-colfax-blackwell-tmem-gemm.txt</code>（Overview 第 43 行、TMEM 第 64 行、tcgen05.mma 第 88 行、tcgen05.ld 第 107 行、TMEM 分配第 469 行）</td>
+<td>本章主线</td>
+</tr>
+<tr>
+<td>★ gau-nernst「tcgen05 for dummies」</td>
+<td><code>text/blog-gau-nernst-tcgen05-for-dummies.txt</code>（基础 kernel 第 72 行、流水线第 742 行、warp 专业化第 793 行、2-SM 第 918 行、persistent 第 992 行）</td>
+<td>从零写一个 Blackwell GEMM 的完整过程</td>
+</tr>
+<tr>
+<td>PTX §9.7.18</td>
+<td><code>text/ptx-isa-9.4-focus-mma-wgmma-tcgen05-tma.txt</code> 第 12040–17350 行</td>
+<td>TMEM 地址格式、形状表、描述符、内存一致性</td>
+</tr>
+<tr>
+<td>PTX §9.7.16.3 Block Scaling</td>
+<td>同文件第 4764–4892 行</td>
+<td>块缩放的公式与合法组合表</td>
+</tr>
+<tr>
+<td>Blackwell tuning guide</td>
+<td><code>text/blackwell-tuning-guide.txt</code> 第 136–230 行</td>
+<td>B200 / RTX 50 的资源数字</td>
+</tr>
+<tr>
+<td>CUTLASS Blackwell 教程</td>
+<td><code>code/cutlass/examples-cute-tutorial/blackwell/01–05</code></td>
+<td>M7 里程碑</td>
+</tr>
+<tr>
+<td>cuda-oxide <code>tcgen05_matmul</code></td>
+<td><code>code/nvidia-cuda-rust/repo/</code></td>
+<td>Rust 侧 Blackwell 支持最完整的部分（03）</td>
+</tr>
+<tr>
+<td>FlashAttention-4 论文</td>
+<td><code>text/flashattention-4.txt</code> §2.2、§3</td>
+<td>Blackwell 上的 attention（第 22 章）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>TMEM 容量</strong>：<span class="arithmatex">\(128 \times 512 \times 4\)</span> 字节 <span class="arithmatex">\(= 256\)</span> KB；一个 <span class="arithmatex">\(M \times N\)</span> 的 FP32 累加器（<span class="arithmatex">\(M \le 128\)</span>）占 <span class="arithmatex">\(N\)</span> 列。</li>
+<li><strong>块缩放的平均位宽</strong>：<span class="arithmatex">\(b_{\text{elem}} + b_{\text{scale}} / k\)</span>（<span class="arithmatex">\(k\)</span> 为块大小）。</li>
+<li><strong>为什么要缩放</strong>：E2M1 的可表示值为 <span class="arithmatex">\(\{0, 0.5, 1, 1.5, 2, 3, 4, 6\}\)</span> 及其负数（〔旧知〕）；乘上块内共享的缩放因子后，每块可以覆盖不同的数量级。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>分配 / 释放 TMEM</td>
+<td><code>tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [smem_addr], ncols;</code> / <code>tcgen05.dealloc ...</code></td>
+</tr>
+<tr>
+<td>MMA</td>
+<td><code>tcgen05.mma.cta_group::1.kind::f16 [d_tmem], a_desc, b_desc, idesc, enable_input_d;</code></td>
+</tr>
+<tr>
+<td>通知完成</td>
+<td><code>tcgen05.commit.cta_group::1.mbarrier::arrive::one ... [mbar];</code></td>
+</tr>
+<tr>
+<td>读累加器</td>
+<td><code>tcgen05.ld.sync.aligned.32x32b.x8.b32 {r...}, [tmem_addr];</code></td>
+</tr>
+<tr>
+<td>2-SM</td>
+<td><code>__cluster_dims__(2,1,1)</code> + <code>.cta_group::2</code></td>
+</tr>
+<tr>
+<td>编译目标</td>
+<td><code>-arch=sm_100a</code>（B200）；消费级 Blackwell 是 <code>sm_120</code>，没有 tcgen05</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch20_tcgen05_tmem.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch20_tcgen05_tmem.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（tcgen05 / TMEM 要 sm_100a [GPU]；块缩放是"先缩放、再取最近的 FP4 值"的数学模拟，不是硬件实现）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch20_tcgen05_tmem.py   # 一步一步打印  
+uv run pytest tests/test_ch19_23.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二步 TMEM 大小</td>
+<td>128 × 512 × 4 B</td>
+<td><code>tmem_bytes()</code></td>
+<td>262144 字节 = 256 KB</td>
+</tr>
+<tr>
+<td>第二步 按列申请</td>
+<td>≥ 32、2 的幂</td>
+<td><code>tmem_alloc_cols(20)</code> / <code>tmem_alloc_cols(100)</code></td>
+<td>32 / 128 列</td>
+</tr>
+<tr>
+<td>第二步 每个 warp 管 1/4</td>
+<td>32 个 lane</td>
+<td><code>warp_lanes(w)</code></td>
+<td>0–31、32–63、64–95、96–127</td>
+</tr>
+<tr>
+<td>第五步 FP4 只有 16 个值</td>
+<td>E2M1</td>
+<td><code>E2M1</code></td>
+<td>0, 0.5, 1, 1.5, 2, 3, 4, 6 再加正负号</td>
+</tr>
+<tr>
+<td>第五步 块缩放</td>
+<td><span class="arithmatex">\(x \approx \text{scale} \times q\)</span></td>
+<td><code>block_quantize(x, 32, "ue8m0")</code> / <code>block_quantize(x, 16, "e4m3")</code></td>
+<td>相对误差：一个 scale 0.250，MXFP4 0.161，NVFP4 0.090</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">xb = x.reshape(-1, block)                          # 每 block 个元素一块
+amax = np.abs(xb).max(axis=1, keepdims=True)
+raw = amax / 6                                     # 让最大的数落在 FP4 的最大值 6 附近
+scale = round_ue8m0(raw) if fmt == &quot;ue8m0&quot; else round_e4m3(raw)
+q = to_e2m1(xb / scale)                            # 每个元素取最近的 FP4 值
+x_hat = q * scale                                  # Tensor Core 自动乘回去
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>误差数字取决于编的数据</strong>：<code>x</code> 是"正态 × 对数正态"，故意让大小差得很多；换一种分布数字会变，但"块越小、scale 越细，误差越小"的顺序不变。</li>
+<li><strong>UE8M0 向上取 2 的幂</strong>：保证缩放后不超过 6；E4M3 缩放因子有 3 位尾数，能更贴近 amax / 6，这是 NVFP4 精度更好的另一半原因（另一半是块更小）。</li>
+<li><strong>真实的 NVFP4 还有一个张量级的 FP32 缩放</strong>（〔旧知〕），这里省略了，只模拟块级缩放。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>固定 scale 格式为 E4M3，把块大小从 16 换成 32、64，看误差怎么变。</li>
+<li>把 <code>x</code> 换成没有离群值的 <code>rng.standard_normal(4096)</code>，看三种方案的差距是不是变小了。</li>
+</ul><nav class="pager"><a href="19-cute-layout.html">← 第 19 章 · CuTe：用 (Shape, Stride) 描述一切数据布局</a><a href="21-online-softmax-fusion.html">第 21 章 · online softmax 与算子融合：少读一遍显存就是快 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 21 章 · online softmax 与算子融合：少读一遍显存就是快 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="21-online-softmax">第 21 章 · online softmax 与算子融合：少读一遍显存就是快</h1><p><a class="btn" href="../animations/21-online-softmax.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：softmax 为什么要先求最大值？标准写法要把数据读几遍？online softmax 怎么边读边更新最大值和分母、只读一遍？什么是算子融合，为什么"两个 memory-bound 的 kernel 合成一个"几乎能快一倍？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/20-blackwell-tcgen05.html">第 20 章 Blackwell</a> · 下一章：<a href="../lessons/22-flashattention.html">第 22 章 FlashAttention</a><br />
+对应原文：FlashAttention-2 论文 §2.3.1 online softmax（<code>materials/text/flashattention-2.txt</code> 第 138–200 行）；Milakov &amp; Gimelshein「Online normalizer calculation for softmax」（2018，〔旧知〕）；Quack《Getting Memory-bound Kernels to Speed-of-Light》（在线）；Liger Kernel（04 调研 §3.3）；cutile-rs tutorial 05 softmax（<code>code/nvidia-cuda-rust/repo/</code>）</p>
+<p>本章缩写：exp = exponential（指数函数 <span class="arithmatex">\(e^x\)</span>）· CE = Cross Entropy（交叉熵）· LSE = Log-Sum-Exp（对数 / 求和 / 指数：<span class="arithmatex">\(\log \sum e^{x_i}\)</span>）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="softmax-2026-11-14">第一步：softmax 与"减最大值"（2026-11-14）</h3>
+<div class="arithmatex">\[\text{softmax}(x)_i = \frac{e^{x_i}}{\sum_j e^{x_j}}\]</div>
+<p>直接算有溢出问题：<span class="arithmatex">\(x = 100\)</span> 时 <span class="arithmatex">\(e^{100} \approx 2.7 \times 10^{43}\)</span>，超过 FP16（最大约 65504），甚至接近 FP32 的上限之外的危险区。标准做法是先减去最大值 <span class="arithmatex">\(m = \max_j x_j\)</span>：</p>
+<div class="arithmatex">\[\text{softmax}(x)_i = \frac{e^{x_i - m}}{\sum_j e^{x_j - m}}\]</div>
+<p>分子分母同乘 <span class="arithmatex">\(e^{-m}\)</span>，结果不变；但现在所有指数都 ≤ 0，<span class="arithmatex">\(e^{x_i - m} \in (0, 1]\)</span>，不会溢出。</p>
+<h3 id="2026-11-14">第二步：标准写法读三遍（2026-11-14）</h3>
+<p>对一行长度 N 的数据：</p>
+<ol>
+<li>读一遍，求最大值 <span class="arithmatex">\(m\)</span>；</li>
+<li>读一遍，求分母 <span class="arithmatex">\(\ell = \sum_j e^{x_j - m}\)</span>；</li>
+<li>读一遍，算 <span class="arithmatex">\(e^{x_i - m} / \ell\)</span> 并写出。</li>
+</ol>
+<p>softmax 每个元素只做几次运算，是典型的 <strong>memory-bound</strong>（第 9 章）——<strong>时间几乎就是读写显存的次数</strong>。三遍读 + 一遍写 = 4 次访存。行太长放不进 shared memory 时，每一遍都要回显存。</p>
+<h3 id="online-softmax2026-11-14">第三步：online softmax——边走边改账（2026-11-14）</h3>
+<p>能不能把第 1、2 遍合成一遍？难点是：算分母时需要最终的最大值 <span class="arithmatex">\(m\)</span>，但读到一半时还不知道后面有没有更大的。</p>
+<p><strong>关键观察</strong>：如果之前用的是"旧的最大值" <span class="arithmatex">\(m_{\text{old}}\)</span>，后来发现更大的 <span class="arithmatex">\(m_{\text{new}}\)</span>，那么之前累加的每一项都只差一个公共因子：</p>
+<div class="arithmatex">\[e^{x_j - m_{\text{new}}} = e^{x_j - m_{\text{old}}} \cdot e^{m_{\text{old}} - m_{\text{new}}}\]</div>
+<p>所以只要把<strong>已经累加的和整体乘上 <span class="arithmatex">\(e^{m_{\text{old}} - m_{\text{new}}}\)</span></strong> 就能修正。一边读一边维护 <span class="arithmatex">\((m, \ell)\)</span>：</p>
+<pre><code>m = -∞, ℓ = 0
+for x in 这一行:
+    m_new = max(m, x)
+    ℓ = ℓ * exp(m - m_new) + exp(x - m_new)    # 旧账按新基准打折，再加上新项
+    m = m_new
+</code></pre>
+<p><strong>数字演示</strong>：<span class="arithmatex">\(x = [1, 3, 2]\)</span>。</p>
+<table>
+<thead>
+<tr>
+<th>读到</th>
+<th>m</th>
+<th>ℓ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>1</td>
+<td><span class="arithmatex">\(e^{0} = 1\)</span></td>
+</tr>
+<tr>
+<td>3</td>
+<td>3</td>
+<td><span class="arithmatex">\(1 \cdot e^{1-3} + e^{0} = 0.1353 + 1 = 1.1353\)</span></td>
+</tr>
+<tr>
+<td>2</td>
+<td>3</td>
+<td><span class="arithmatex">\(1.1353 \cdot e^{0} + e^{2-3} = 1.1353 + 0.3679 = 1.5032\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>直接算：<span class="arithmatex">\(e^{1-3} + e^{3-3} + e^{2-3} = 0.1353 + 1 + 0.3679 = 1.5032\)</span> ✓。</p>
+<p>现在 softmax 只要<strong>两遍</strong>：一遍得到 <span class="arithmatex">\((m, \ell)\)</span>，一遍输出。访存从 4 次变 3 次。</p>
+<p>更重要的是<strong>这个 <span class="arithmatex">\((m, \ell)\)</span> 可以分块合并</strong>：两块各自算出 <span class="arithmatex">\((m_1, \ell_1)\)</span>、<span class="arithmatex">\((m_2, \ell_2)\)</span>，合并为</p>
+<div class="arithmatex">\[m = \max(m_1, m_2), \quad \ell = \ell_1 e^{m_1 - m} + \ell_2 e^{m_2 - m}\]</div>
+<p>——满足结合律，所以<strong>可以并行归约</strong>（第 10–11 章：先线程内、再 warp shuffle、再 block）。FlashAttention-2 论文 §2.3.1 把同样的技巧扩展到"连同输出 <span class="arithmatex">\(O\)</span> 一起打折修正"，这就是 FlashAttention 的核心（下一章）。</p>
+<h3 id="2026-11-14_1">第四步：算子融合——中间结果别落地（2026-11-14）</h3>
+<p><strong>融合（fusion）</strong>：把几个连着的运算写进<strong>同一个 kernel</strong>，中间结果留在寄存器 / shared memory 里，不写回显存。</p>
+<p><strong>数字演示</strong>：对一个 1 亿元素的 BF16 张量做 <code>y = gelu(x + bias)</code>。</p>
+<table>
+<thead>
+<tr>
+<th>写法</th>
+<th>显存访问</th>
+<th>字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>两个 kernel：<code>t = x + bias</code>，<code>y = gelu(t)</code></td>
+<td>读 x、写 t、读 t、写 y</td>
+<td>4 × 200 MB = 800 MB</td>
+</tr>
+<tr>
+<td>一个融合 kernel</td>
+<td>读 x、写 y</td>
+<td>2 × 200 MB = 400 MB</td>
+</tr>
+</tbody>
+</table>
+<p>两者都是 memory-bound，<strong>融合后耗时约为一半</strong>。还省掉了一次 kernel 启动（第 26 章）。</p>
+<p>AI 训练 / 推理里最有价值的融合：</p>
+<table>
+<thead>
+<tr>
+<th>融合</th>
+<th>省掉了什么</th>
+<th>代表实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>残差加 + RMSNorm / LayerNorm</td>
+<td>一次完整读写</td>
+<td>Quack、Liger、Apex</td>
+</tr>
+<tr>
+<td>GEMM + bias + 激活（epilogue 融合）</td>
+<td>GEMM 输出的一次读写</td>
+<td>cuBLASLt、CUTLASS epilogue（第 15、20 章）</td>
+</tr>
+<tr>
+<td>QKᵀ → softmax → PV（attention）</td>
+<td><span class="arithmatex">\(N \times N\)</span> 的中间矩阵</td>
+<td>FlashAttention（第 22 章）</td>
+</tr>
+<tr>
+<td>最后一层 Linear + 交叉熵</td>
+<td>词表大小 × token 数的 logits（可能几十 GB）</td>
+<td>Liger 的 fused linear cross entropy：分块算、算完即丢</td>
+</tr>
+<tr>
+<td>量化 + GEMM</td>
+<td>反量化后的大矩阵</td>
+<td>Marlin、DeepGEMM</td>
+</tr>
+</tbody>
+</table>
+<p><code>torch.compile</code> 的 Inductor 会自动做一部分逐元素融合；跨 GEMM 的融合（如 attention）还是要靠手写 kernel。</p>
+<h3 id="memory-bound-kernel-2026-11-14">第五步：memory-bound kernel 做到"光速"（2026-11-14）</h3>
+<p>Quack 博客的结论：RMSNorm、softmax、交叉熵这类 kernel 要达到显存带宽上限（SOL），两件事最关键——</p>
+<ol>
+<li><strong>全局内存合并读写</strong>（第 6 章；向量化读）；</li>
+<li><strong>按归约维度大小选归约策略</strong>：一行很短 → 一个 warp 处理一行，只用 shuffle；一行中等 → 一个 block 一行，warp + shared；一行很长（几万到几十万，比如大词表的交叉熵）→ 一个 cluster 处理一行，用分布式 shared memory 归约（第 17 章）。</li>
+</ol>
+<p>Quack 报告它的归约模板在 H100 上对 256 到 262k 的各种行长都接近带宽上限（04 调研 摘录）。</p>
+<h3 id="online-softmax">动画演示：online softmax 边读边改账</h3>
+<p><img alt="online softmax" src="../animations/21-online-softmax.gif" /></p>
+<p>可交互版：<a href="../animations/21-online-softmax.html">animations/21-online-softmax.html</a>。开关：<strong>数据</strong>（随机 / 递增 / 开头最大）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>一行 8 个数，从左往右逐个读入；</li>
+<li>上方记分板显示当前的 m 和 ℓ；遇到更大的数时，旧的 ℓ 先乘上 <span class="arithmatex">\(e^{m_{\text{old}} - m_{\text{new}}}\)</span>（画成"打折"动画），再加新项；</li>
+<li>最后一帧对比"三遍法"和"online 法"的读取次数，以及两者算出的 ℓ 完全一致；</li>
+<li>"开头最大"时从不需要打折，"递增"时每一步都要打折。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：对 <span class="arithmatex">\(x = [2, 0, 4, 1]\)</span> 用 online 方法逐步写出 <span class="arithmatex">\((m, \ell)\)</span>，最后和直接计算 <span class="arithmatex">\(\sum e^{x_j - 4}\)</span> 对比。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：两个线程各处理一半数据，得到 <span class="arithmatex">\((m_1, \ell_1) = (3, 1.5)\)</span> 和 <span class="arithmatex">\((m_2, \ell_2) = (5, 2.0)\)</span>。合并后的 <span class="arithmatex">\((m, \ell)\)</span> 是多少？为什么这个合并满足结合律很重要？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：一个 Transformer 层里 <code>h = x + attn_out</code>，<code>y = rmsnorm(h)</code>，后面还要用 <code>h</code> 做下一个残差。把"残差加 + RMSNorm"融合成一个 kernel，按每元素 2 字节（BF16）算，比分开写省了多少显存读写？（注意 h 还要写出来）</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>softmax 先减最大值，指数不会爆；<br />
+三遍变两遍：边读边改账，遇到更大的，旧账乘 e 的差；<br />
+(m, ℓ) 能合并，就能分块、能并行；<br />
+融合：中间结果别落地，两个 memory-bound 合一个，时间砍一半；<br />
+光速两件事：合并读写，按行长选归约层级。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C50（online softmax 的更新式：<span class="arithmatex">\(\ell \leftarrow \ell e^{m - m'} + e^{x - m'}\)</span>；两块 <span class="arithmatex">\((m, \ell)\)</span> 的合并式）</li>
+<li>C51（算子融合省的是什么；AI 里五类最有价值的融合）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ FlashAttention-2 §2.3.1</td>
+<td><code>text/flashattention-2.txt</code> 第 138–200 行</td>
+<td>online softmax 用在 attention 里的公式（含输出 O 的修正）</td>
+</tr>
+<tr>
+<td>★ Quack 博客 + <code>Dao-AILab/quack</code></td>
+<td>在线</td>
+<td>memory-bound kernel 做到 SOL 的系统方法</td>
+</tr>
+<tr>
+<td>Milakov &amp; Gimelshein「Online normalizer calculation for softmax」（arXiv 1805.02867）</td>
+<td>在线（〔旧知〕）</td>
+<td>online softmax 的原始论文</td>
+</tr>
+<tr>
+<td>Horace He「Making Deep Learning Go Brrrr」</td>
+<td>在线</td>
+<td>融合为什么有效的直观解释</td>
+</tr>
+<tr>
+<td>Liger Kernel 源码的 <code>fused_linear_cross_entropy</code></td>
+<td>在线</td>
+<td>大词表交叉熵的分块融合</td>
+</tr>
+<tr>
+<td>cutile-rs tutorial 05 softmax</td>
+<td><code>code/nvidia-cuda-rust/repo/</code></td>
+<td>Tile 模型下 softmax 的写法（第 24 章）</td>
+</tr>
+<tr>
+<td>Transformer 讲义 里 softmax 一章</td>
+<td>本仓库</td>
+<td>softmax 本身的数学含义</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>平移不变性</strong>：<span class="arithmatex">\(\text{softmax}(x + c) = \text{softmax}(x)\)</span>，所以可以减 <span class="arithmatex">\(m\)</span>。</li>
+<li><strong>online 更新的正确性</strong>：归纳假设 <span class="arithmatex">\(\ell = \sum_{j \le k} e^{x_j - m}\)</span>，读入 <span class="arithmatex">\(x_{k+1}\)</span>、<span class="arithmatex">\(m' = \max(m, x_{k+1})\)</span> 后 <span class="arithmatex">\(\ell e^{m - m'} + e^{x_{k+1} - m'} = \sum_{j \le k+1} e^{x_j - m'}\)</span>。</li>
+<li><strong>合并的结合律</strong>：<span class="arithmatex">\((m, \ell)\)</span> 实际表示 <span class="arithmatex">\(\log\)</span>-域里的 <span class="arithmatex">\(\text{LSE} = m + \log \ell\)</span>；合并就是 <span class="arithmatex">\(\text{LSE}(a \cup b) = \log(e^{\text{LSE}_a} + e^{\text{LSE}_b})\)</span>，显然满足结合律和交换律。</li>
+<li><strong>融合的收益</strong>：memory-bound 时耗时 ∝ 总访存字节；融合把中间张量的"一写一读"去掉。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>公式 / 代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>安全 softmax</td>
+<td><span class="arithmatex">\(e^{x_i - m} / \sum_j e^{x_j - m}\)</span></td>
+</tr>
+<tr>
+<td>online 更新</td>
+<td><code>m2 = max(m, x); l = l * exp(m - m2) + exp(x - m2); m = m2;</code></td>
+</tr>
+<tr>
+<td>合并</td>
+<td><code>m = max(m1, m2); l = l1 * exp(m1 - m) + l2 * exp(m2 - m);</code></td>
+</tr>
+<tr>
+<td>LSE</td>
+<td><span class="arithmatex">\(m + \log \ell\)</span>（FlashAttention 反向要存它）</td>
+</tr>
+<tr>
+<td>warp 内合并</td>
+<td>对 <span class="arithmatex">\((m, \ell)\)</span> 做 5 步 <code>__shfl_xor_sync</code>，每步用上面的合并式</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch21_online_softmax.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch21_online_softmax.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch21_online_softmax.py   # 一步一步打印  
+uv run pytest tests/test_ch19_23.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 溢出</td>
+<td><span class="arithmatex">\(e^{100}\)</span></td>
+<td><code>np.exp(np.float16(100))</code></td>
+<td>inf；减最大值后正常</td>
+</tr>
+<tr>
+<td>第三步 online</td>
+<td><span class="arithmatex">\(\ell \leftarrow \ell e^{m - m'} + e^{x - m'}\)</span></td>
+<td><code>online_ml([1, 3, 2])</code></td>
+<td>(1, 1) → (3, 1.1353) → (3, 1.5032)</td>
+</tr>
+<tr>
+<td>第三步 直接算</td>
+<td><span class="arithmatex">\(\sum e^{x_j - 3}\)</span></td>
+<td><code>sum(math.exp(v - 3) for v in [1, 3, 2])</code></td>
+<td>1.5032</td>
+</tr>
+<tr>
+<td>第三步 分块合并</td>
+<td><span class="arithmatex">\(\ell = \ell_1 e^{m_1 - m} + \ell_2 e^{m_2 - m}\)</span></td>
+<td><code>merge(online_ml([1, 3])[-1], online_ml([2])[-1])</code></td>
+<td>= 一次读完的 (3, 1.5032)</td>
+</tr>
+<tr>
+<td>第四步 融合</td>
+<td>4 次 vs 2 次读写</td>
+<td><code>fusion_bytes(100_000_000)</code></td>
+<td>800 MB vs 400 MB</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">m, l = -math.inf, 0.0
+for x in xs:
+    m_new = max(m, x)
+    l = l * math.exp(m - m_new) + math.exp(x - m_new)   # 旧账打折 + 新项
+    m = m_new
+
+def merge(a, b):                                        # 两块的 (m, ℓ) 合并
+    m = max(a[0], b[0])
+    return m, a[1] * math.exp(a[0] - m) + b[1] * math.exp(b[0] - m)
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong><code>math.exp(-math.inf)</code> 等于 0</strong>：所以第一次循环时 <code>l * exp(m - m_new)</code> 自动是 0，不用单独写"第一次"的分支。</li>
+<li><strong>溢出时 NumPy 给的是 inf 和 nan，不报错</strong>：<code>softmax_naive</code> 在 FP16 下得到 <code>[nan nan nan]</code>（inf ÷ inf）；代码用 <code>np.errstate</code> 把警告关掉了，GPU 上同样是悄悄变成 nan。</li>
+<li><strong><code>merge</code> 满足结合律</strong>：<code>merge(merge(a, b), c) == merge(a, merge(b, c))</code>，所以能按任意分组并行归约（第 10–11 章）。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>online_ml</code> 的输入换成一长串随机数，和 <code>np.log(np.exp(x).sum())</code> 对比 <code>m + log ℓ</code>。</li>
+<li>用 <code>merge</code> 把一串数分成 3 块、4 块分别算再合并，确认结果不变。</li>
+</ul><nav class="pager"><a href="20-blackwell-tcgen05.html">← 第 20 章 · Blackwell：tcgen05、Tensor Memory、2-SM MMA 与块缩放低精度</a><a href="22-flashattention.html">第 22 章 · FlashAttention：从 FA1 到 FA4，每一代在解决什么瓶颈 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

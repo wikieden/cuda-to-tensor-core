@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 10 章 · 归约：一百万个数求和，怎么让一千个线程分着加 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="10">第 10 章 · 归约：一百万个数求和，怎么让一千个线程分着加</h1><p><a class="btn" href="../animations/10-reduction-tree.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：求和、求最大值这类"很多个数变成一个数"的运算，在 GPU 上怎么并行？block 内的树形归约怎么写？为什么"前一半加后一半"比"相邻两两相加"好？block 之间的部分和怎么合起来？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/09-roofline-profiling.html">第 9 章 性能分析</a> · 下一章：<a href="../lessons/11-warp-shuffle-atomics.html">第 11 章 warp shuffle 与原子操作</a><br />
+对应原文：Oxford lec4 第 7–18 页（<code>materials/text/oxford-lec4.txt</code> 第 162–395 行，局部归约代码在第 15 页 / 第 336–352 行）；PMPP 第 5 版 ch.10 Reduction；本仓库 <code>solutions/cubecl-lab/src/lib.rs</code> M1 的 TODO 注释；Mark Harris「Optimizing Parallel Reduction in CUDA」（〔旧知〕在线）</p>
+<p>本章缩写：PMPP = Programming Massively Parallel Processors（大规模并行处理器编程，Kirk &amp; Hwu 的教科书）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-14">第一步：归约是什么、什么运算能并行归约（2026-11-14）</h3>
+<p><strong>归约（reduction）</strong>：用一个二元运算 ∘ 把一串数并成一个数，<span class="arithmatex">\(v = u_0 \circ u_1 \circ \cdots \circ u_{N-1}\)</span>。求和、求积、最大值、最小值都是。</p>
+<p>Oxford lec4 第 9 页：能并行归约的运算要满足</p>
+<ul>
+<li><strong>结合律</strong>：<span class="arithmatex">\((a \circ b) \circ c = a \circ (b \circ c)\)</span>——这样才能随便分组；</li>
+<li>最好也满足<strong>交换律</strong>：<span class="arithmatex">\(a \circ b = b \circ a\)</span>——这样才能随便换顺序。</li>
+</ul>
+<p>一个要小心的地方（Oxford 同页）：<strong>浮点加法严格来说不满足结合律</strong>，<span class="arithmatex">\((a + b) + c\)</span> 和 <span class="arithmatex">\(a + (b + c)\)</span> 可能差在最后几位。所以 GPU 上并行求和的结果和 CPU 顺序求和<strong>不会一模一样</strong>，对拍要用容差（04 调研 §4.3）。</p>
+<h3 id="2026-11-14_1">第二步：树形归约——像淘汰赛（2026-11-14）</h3>
+<p>CPU 顺序加 N 个数要 N − 1 步。GPU 上换成<strong>淘汰赛</strong>：</p>
+<ul>
+<li>第 1 轮：8 个数两两配对，4 个线程各加一对 → 剩 4 个；</li>
+<li>第 2 轮：2 个线程 → 剩 2 个；</li>
+<li>第 3 轮：1 个线程 → 剩 1 个。</li>
+</ul>
+<p>总加法次数还是 N − 1，但<strong>轮数只有 <span class="arithmatex">\(\log_2 N\)</span></strong>。256 个数只要 8 轮。</p>
+<p>Oxford lec4 第 15 页的 block 内归约代码（"前一半加后一半"）：</p>
+<pre><code class="language-cpp">__global__ void sum(float* d_sum, float* d_data) {
+    extern __shared__ float temp[];
+    int tid = threadIdx.x;
+    temp[tid] = d_data[tid + blockIdx.x * blockDim.x];   // 每个线程搬一个数进 shared
+    for (int d = blockDim.x / 2; d &gt; 0; d = d / 2) {
+        __syncthreads();                                  // 上一轮全部写完再读
+        if (tid &lt; d) temp[tid] += temp[tid + d];          // 前 d 个线程：自己 + 后半段对应位置
+    }
+    if (tid == 0) d_sum[blockIdx.x] = temp[0];            // 每个 block 留一个部分和
+}
+</code></pre>
+<p><strong>数字演示</strong>（blockDim = 8，数据 <code>[3, 1, 4, 1, 5, 9, 2, 6]</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>轮</th>
+<th>d</th>
+<th>干活的线程</th>
+<th>temp 变成</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>初始</td>
+<td>—</td>
+<td>—</td>
+<td>3 1 4 1 5 9 2 6</td>
+</tr>
+<tr>
+<td>1</td>
+<td>4</td>
+<td>0–3：temp[t] += temp[t+4]</td>
+<td><strong>8 10 6 7</strong> 5 9 2 6</td>
+</tr>
+<tr>
+<td>2</td>
+<td>2</td>
+<td>0–1：temp[t] += temp[t+2]</td>
+<td><strong>14 17</strong> 6 7 …</td>
+</tr>
+<tr>
+<td>3</td>
+<td>1</td>
+<td>0：temp[0] += temp[1]</td>
+<td><strong>31</strong> …</td>
+</tr>
+</tbody>
+</table>
+<p>3 + 1 + 4 + 1 + 5 + 9 + 2 + 6 = 31 ✓。</p>
+<h3 id="2026-11-14_2">第三步：为什么是"前一半加后一半"（2026-11-14）</h3>
+<p>另一种看起来也对的写法是<strong>相邻两两相加</strong>（interleaved addressing）：</p>
+<pre><code class="language-cpp">for (int s = 1; s &lt; blockDim.x; s *= 2) {
+    __syncthreads();
+    if (tid % (2 * s) == 0) temp[tid] += temp[tid + s];
+}
+</code></pre>
+<p>结果一样，但慢。两个原因，正好是第 3、7 章的内容：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>相邻两两相加</th>
+<th>前一半加后一半</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第 1 轮干活的线程</td>
+<td>0、2、4、6…（隔一个）</td>
+<td>0、1、2、3…（连续的前一半）</td>
+</tr>
+<tr>
+<td>warp 分岔（第 3 章）</td>
+<td><strong>每个 warp 都分岔</strong>：一半 lane 干活、一半屏蔽，后几轮更稀疏</td>
+<td>前几轮整个 warp 要么全干、要么全不干；只有剩不到 32 个线程时才分岔</td>
+</tr>
+<tr>
+<td>bank conflict（第 7 章）</td>
+<td>第 2 轮线程 t 访问 <code>temp[4k]</code>，跨步 4 → 4 路冲突，越往后越严重</td>
+<td>连续线程访问连续地址，<strong>无冲突</strong></td>
+</tr>
+<tr>
+<td><code>%</code> 运算</td>
+<td>每轮都要算，取模很慢</td>
+<td>只要比较</td>
+</tr>
+</tbody>
+</table>
+<p>Mark Harris 的经典讲稿里，这一改动在 G80 上把带宽提升约 2 倍（〔旧知〕）。本仓库 cubecl-lab M1 的注释里也留了这道思考题。</p>
+<h3 id="block-2026-11-14">第四步：block 之间怎么合（2026-11-14）</h3>
+<p>每个 block 算出一个部分和，还要把它们加起来。第 2 章说过 <strong>block 之间不能互相等</strong>，所以有两条路（Oxford lec4 第 17–18 页）：</p>
+<ol>
+<li><strong>两次 kernel</strong>：第一个 kernel 每个 block 写一个部分和到 <code>d_sum[blockIdx.x]</code>；第二个 kernel（或 CPU）再把这几百个部分和归约掉。kernel 之间天然有先后。</li>
+<li><strong>原子加</strong>：每个 block 的 0 号线程直接 <code>atomicAdd(&amp;total, temp[0])</code>。硬件保证并发的原子加不会互相覆盖，只要一个 kernel。下一章细讲。</li>
+</ol>
+<h3 id="grid-stride-loop2026-11-14">第五步：每个线程先多加几个——grid-stride loop（2026-11-14）</h3>
+<p>上面的写法一个线程只搬一个数，数据有 1 亿个就要 1 亿个线程、39 万个 block，大部分时间花在"开线程、进 shared、同步"上，真正的加法很少。</p>
+<p>更好的做法：<strong>固定开不多的 block（比如 SM 数的几倍），每个线程先在寄存器里顺序加很多个数，再进树形归约</strong>：</p>
+<pre><code class="language-cpp">float acc = 0.0f;
+for (int i = blockIdx.x * blockDim.x + threadIdx.x; i &lt; n; i += gridDim.x * blockDim.x)
+    acc += data[i];            // 步长 = 整个 grid 的线程数，每次循环整个 grid 合并地读一段
+temp[tid] = acc;
+// ……接树形归约
+</code></pre>
+<p>这叫 <strong>grid-stride loop</strong>：每一圈，整个 grid 的线程一起读连续的一大段（合并访存，第 6 章），一圈圈往后推。好处：</p>
+<ul>
+<li>block 数和数据量无关，不会碰到 grid 大小上限（cubecl-lab 的 M1c 就是为了解决 WebGPU 每维 65535 个 workgroup 的限制）；</li>
+<li>大部分加法在寄存器里完成，shared memory 和同步的开销被摊薄；</li>
+<li>归约是典型的 memory-bound 运算（每读 4 字节只做 1 次加法），<strong>目标是打满显存带宽</strong>（第 9 章）。</li>
+</ul>
+<h3 id="_2">动画演示：树形归约的两种配对方式</h3>
+<p><img alt="树形归约" src="../animations/10-reduction-tree.gif" /></p>
+<p>可交互版：<a href="../animations/10-reduction-tree.html">animations/10-reduction-tree.html</a>。开关：<strong>配对方式</strong>（前一半 + 后一半 / 相邻两两）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>16 个数排成一行，每轮画出谁加到谁身上；</li>
+<li>下方把线程按 warp（这里缩成每 4 个一组）着色：亮的在干活、灰的被屏蔽；</li>
+<li>右边统计每轮"有分岔的 warp 数"；</li>
+<li>切换两种方式，对比分岔的 warp 数和 shared memory 访问的跨步。</li>
+</ol>
+<h2 id="_3">练习与作答记录</h2>
+<p><strong>题 1</strong>：blockDim = 256 的树形归约要几轮？每一轮之前为什么都要 <code>__syncthreads()</code>？如果把 <code>__syncthreads()</code> 放到 <code>if (tid &lt; d)</code> 里面会怎样？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：用"前一半加后一半"的写法、blockDim = 256，第几轮开始出现 warp 分岔？（提示：数一数每轮干活的线程有多少个，跟 32 比）</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：1 亿个 float 求和，H100 显存约 3.35 TB/s。这个 kernel 理论上最快多少微秒？用"一个线程一个数"的写法和 grid-stride 写法，哪个更可能接近这个数？为什么？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_4">口诀</h2>
+<blockquote>
+<p>能结合就能并行，浮点不严格结合，对拍要容差；<br />
+淘汰赛：N 个数 log N 轮；<br />
+前一半加后一半：不分岔、不冲突；相邻两两加：又分岔又冲突；<br />
+block 之间不能等：要么两个 kernel，要么原子加；<br />
+先在寄存器里多加几个（grid-stride），再进 shared 打淘汰赛。</p>
+</blockquote>
+<h2 id="_5">本章复习卡片</h2>
+<ul>
+<li>C23（block 内树形归约的写法；"前一半加后一半"为什么比"相邻两两"好：分岔 + bank conflict）</li>
+<li>C24（grid-stride loop：步长 = gridDim.x × blockDim.x；作用）</li>
+</ul>
+<h2 id="_6">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_7">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ Oxford lec4 第 7–18 页</td>
+<td><code>text/oxford-lec4.txt</code> 第 162–395 行</td>
+<td>归约的要求、局部归约代码、两种全局归约</td>
+</tr>
+<tr>
+<td>★ Mark Harris「Optimizing Parallel Reduction in CUDA」</td>
+<td>在线（NVIDIA 讲稿，〔旧知〕）</td>
+<td>7 个版本逐步优化的经典，带宽数字</td>
+</tr>
+<tr>
+<td>★ cubecl-lab M1</td>
+<td><code>solutions/cubecl-lab/src/lib.rs</code> 的 <code>reduce_block_kernel</code> TODO</td>
+<td>在 Mac 上自己写：M1a 树形、M1c grid-stride、M1b warp 版</td>
+</tr>
+<tr>
+<td>PMPP 第 5 版 ch.10</td>
+<td>Reduction</td>
+<td>教科书版：收敛 / 分岔、线程粗化（thread coarsening）</td>
+</tr>
+<tr>
+<td>Quack「Getting Memory-bound Kernels to Speed-of-Light」</td>
+<td>在线</td>
+<td>归约做到 H100 带宽上限：线程 → warp → block → cluster 分层</td>
+</tr>
+<tr>
+<td>Oxford prac4</td>
+<td><code>courses/oxford-cuda-giles/prac4/</code></td>
+<td>归约练习（<code>reduction_shared_*.cu</code> 是参考解，做完再看）</td>
+</tr>
+<tr>
+<td>CUB <code>BlockReduce</code></td>
+<td><code>code/cccl/</code></td>
+<td>生产代码怎么写，模板参数怎么选算法</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_8">数学原理</h3>
+<ul>
+<li><strong>工作量与步数</strong>：树形归约总运算次数 <span class="arithmatex">\(N - 1\)</span>（和顺序算法一样，叫 work-efficient），并行步数 <span class="arithmatex">\(\lceil \log_2 N \rceil\)</span>。</li>
+<li><strong>浮点误差</strong>：顺序求和的误差上界随 <span class="arithmatex">\(N\)</span> 线性增长，树形求和随 <span class="arithmatex">\(\log N\)</span> 增长——并行归约通常<strong>更准</strong>，只是和顺序结果不逐位相同。</li>
+<li><strong>grid-stride 的覆盖</strong>：线程全局号 <span class="arithmatex">\(g\)</span>、总线程数 <span class="arithmatex">\(P\)</span>，访问 <span class="arithmatex">\(g, g+P, g+2P, \dots\)</span>；所有线程合起来恰好覆盖 <span class="arithmatex">\(0..n-1\)</span> 一次。</li>
+</ul>
+<h3 id="_9">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>树形归约主循环</td>
+<td><code>for (d = blockDim.x/2; d &gt; 0; d /= 2) { __syncthreads(); if (tid &lt; d) s[tid] += s[tid+d]; }</code></td>
+</tr>
+<tr>
+<td>写部分和</td>
+<td><code>if (tid == 0) partial[blockIdx.x] = s[0];</code></td>
+</tr>
+<tr>
+<td>原子合并</td>
+<td><code>if (tid == 0) atomicAdd(total, s[0]);</code></td>
+</tr>
+<tr>
+<td>grid-stride</td>
+<td><code>for (i = blockIdx.x*blockDim.x + threadIdx.x; i &lt; n; i += gridDim.x*blockDim.x)</code></td>
+</tr>
+<tr>
+<td>动态 shared 启动</td>
+<td><code>sum&lt;&lt;&lt;blocks, threads, threads * sizeof(float)&gt;&gt;&gt;(...)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_10">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch10_reduction.py</code>，配套测试 <code>tests/test_ch07_12.py</code>；同一章的 notebook：<code>notebooks/ch10_reduction.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch10_reduction.py   # 一步一步打印  
+uv run pytest tests/test_ch07_12.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 浮点不结合</td>
+<td><span class="arithmatex">\((a+b)+c \ne a+(b+c)\)</span></td>
+<td><code>(0.1 + 0.2) + 0.3</code> vs <code>0.1 + (0.2 + 0.3)</code></td>
+<td>0.6000000000000001 vs 0.6</td>
+</tr>
+<tr>
+<td>第二步 前一半加后一半</td>
+<td><code>temp[t] += temp[t + d]</code></td>
+<td><code>tree_halves([3, 1, 4, 1, 5, 9, 2, 6])</code></td>
+<td>8 10 6 7 → 14 17 → 31，3 轮</td>
+</tr>
+<tr>
+<td>第三步 两种写法干活的线程</td>
+<td>连续 vs 隔一个</td>
+<td><code>active_threads_halves(8)</code> / <code>active_threads_interleaved(8)</code></td>
+<td>[[0,1,2,3],[0,1],[0]] vs [[0,2,4,6],[0,4],[0]]</td>
+</tr>
+<tr>
+<td>第三步 bank conflict</td>
+<td>跨步 4</td>
+<td><code>conflict_ways(np.arange(32) * 4)</code>（第 7 章的函数）</td>
+<td>4 路</td>
+</tr>
+<tr>
+<td>第五步 grid-stride</td>
+<td><code>i += gridDim.x * blockDim.x</code></td>
+<td><code>grid_stride_partials(data, 2, 4)</code></td>
+<td>线程 0 读 0、8、16；总和 210</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">d = len(temp) // 2
+while d &gt; 0:                              # 每一轮之前有一道 __syncthreads()
+    for t in range(d):                    # 前 d 个线程同时做
+        temp[t] += temp[t + d]
+    d //= 2
+
+acc[tid] = data[tid::total].sum()         # grid-stride：每次跳过整个 grid 的线程数
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>Python 的 for 循环是一个一个做的</strong>：同一轮里"前 d 个线程同时做"在这里写成循环；能这样写是因为同一轮里每个线程读写的位置互不重叠（读 <code>t + d</code>、写 <code>t</code>）。</li>
+<li><strong><code>data[tid::total]</code> 就是 grid-stride 的下标序列</strong>：从自己的全局编号开始，每次加 grid 的总线程数。</li>
+<li><strong>100 万个 float32 两种加法顺序结果不同</strong>：<code>np.cumsum</code> 是一个一个顺序加，<code>np.sum</code> 内部分组两两加，最后几位不一样——GPU 和 CPU 对拍要用容差（第 27 章）。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>tree_halves</code> 的输入换成 16 个数，看要几轮。</li>
+<li>把 <code>grid_stride_partials</code> 的 grid / block 换成 (1, 4)、(5, 4)，确认总和不变。</li>
+</ul><nav class="pager"><a href="09-roofline-profiling.html">← 第 9 章 · 性能分析：roofline、正确计时与 Nsight</a><a href="11-warp-shuffle-atomics.html">第 11 章 · warp shuffle 与原子操作：不经过 shared memory 交换数据 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

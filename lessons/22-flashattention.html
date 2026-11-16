@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 22 章 · FlashAttention：从 FA1 到 FA4，每一代在解决什么瓶颈 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="22-flashattention-fa1-fa4">第 22 章 · FlashAttention：从 FA1 到 FA4，每一代在解决什么瓶颈</h1><p><a class="btn" href="../animations/22-flashattention.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：标准 attention 为什么慢在显存而不是算力？FlashAttention 怎么用分块 + online softmax 做到"不写出 N × N 矩阵"、结果完全精确？FA2、FA3、FA4 分别针对 A100、H100、B200 做了什么改动？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/21-online-softmax-fusion.html">第 21 章 online softmax 与融合</a> · 下一章：<a href="../lessons/23-inference-kernels.html">第 23 章 推理 kernel</a><br />
+对应原文：FlashAttention-2 论文（<code>materials/text/flashattention-2.txt</code>：§2.3 第 138–225 行、§3.1 第 234–388 行、§3.2 第 389–469 行）；FlashAttention-3 论文（<code>text/flashattention-3.txt</code>：摘要、§3.1 第 208–298 行、§3.2 第 299–369 行、§3.3 FP8 第 370–447 行）；FlashAttention-4 论文（<code>text/flashattention-4.txt</code>：摘要、§3.1 第 203–414 行）；GPU MODE L36、L80 字幕；Oxford「FlashAttention」讲义（<code>text/oxford-FlashAttention.txt</code>）</p>
+<p>本章缩写：FA = FlashAttention · HBM = High Bandwidth Memory（显存）· SRAM = Static RAM（这里指 shared memory / 寄存器等片上存储）· Q / K / V = Query / Key / Value（查询 / 键 / 值）· <span class="arithmatex">\(B_r\)</span> / <span class="arithmatex">\(B_c\)</span> = row / column block size（Q 块的行数 / K、V 块的行数）· d = head dimension（每个注意力头的维度）· MUFU = Multi-Function Unit（多功能单元，GPU 上算 exp 等超越函数的硬件，即 SFU）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="attention-2026-11-14">第一步：标准 attention 慢在哪（2026-11-14）</h3>
+<p>一个头的 attention（序列长 N、头维度 d）：</p>
+<div class="arithmatex">\[S = QK^\top \in \mathbb{R}^{N \times N}, \quad P = \text{softmax}(S), \quad O = PV \in \mathbb{R}^{N \times d}\]</div>
+<p>标准实现三个 kernel：GEMM 写出 <span class="arithmatex">\(S\)</span> → softmax 读 <span class="arithmatex">\(S\)</span> 写 <span class="arithmatex">\(P\)</span> → GEMM 读 <span class="arithmatex">\(P\)</span>。</p>
+<p><strong>数字演示</strong>：N = 8192、d = 128、BF16，一个头：</p>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>大小</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Q、K、V、O 各</td>
+<td>8192 × 128 × 2 B = 2 MB</td>
+</tr>
+<tr>
+<td>S、P 各</td>
+<td>8192 × 8192 × 2 B = <strong>128 MB</strong></td>
+</tr>
+</tbody>
+</table>
+<p>中间矩阵比输入输出大 <strong>64 倍</strong>，而 softmax 那一步是 memory-bound（第 21 章）。显存读写主要花在 S、P 上，而且显存<strong>占用</strong>随 <span class="arithmatex">\(N^2\)</span> 增长——长序列直接放不下。</p>
+<h3 id="flashattention-online-softmax2026-11-14">第二步：FlashAttention 的思路——分块 + online softmax（2026-11-14）</h3>
+<p>FA2 论文 §2.3.1 原话：用分块（tiling）减少显存读写——(1) 把输入分块从 HBM 搬进 SRAM，(2) 在块上算 attention，(3) 更新输出，<strong>不把大的中间矩阵 S、P 写回 HBM</strong>。</p>
+<p>难点是 softmax 要整行的最大值和分母，而一次只看得到一块 K。解法就是第 21 章的 online softmax，<strong>连同输出 O 一起打折修正</strong>：</p>
+<pre><code>对一个 Q 块 Q_i（B_r 行）：
+  O = 0, m = -∞, ℓ = 0
+  for 每个 K、V 块 j：
+      S = Q_i K_jᵀ                          # B_r × B_c，留在片上
+      m_new = max(m, rowmax(S))
+      P̃ = exp(S - m_new)
+      ℓ = exp(m - m_new) · ℓ + rowsum(P̃)
+      O = exp(m - m_new) · O + P̃ V_j        # 旧的输出也按新基准打折
+      m = m_new
+  O = O / ℓ                                 # 最后统一除分母
+  存 LSE = m + log ℓ（反向传播要用）
+</code></pre>
+<p>（这是 FA2 的版本：先不除 ℓ，循环结束再除一次——FA2 §3.1.1 的第一个改动，省掉每一步的除法。）</p>
+<p><strong>结果完全精确，没有近似</strong>；显存访问只有读 Q、K、V、写 O，从 <span class="arithmatex">\(O(N^2)\)</span> 降到 <span class="arithmatex">\(O(N^2 d / M)\)</span> 量级（<span class="arithmatex">\(M\)</span> 为片上存储大小，FA1 论文的分析〔旧知〕），显存<strong>占用</strong>从 <span class="arithmatex">\(O(N^2)\)</span> 降到 <span class="arithmatex">\(O(N)\)</span>。FA2 论文说 FA 带来 2–4 倍的实际加速，反向省 10–20 倍显存。</p>
+<p>反向传播同样分块，<strong>不存 P，用 Q、K、V 和保存的 LSE 重新算一遍</strong>（重计算换显存）。</p>
+<h3 id="fa2a1002026-11-14">第三步：FA2（A100）——少做非矩阵乘的运算、多并行一维（2026-11-14）</h3>
+<p>FA2 论文 §3.1 的出发点："A100 FP16 矩阵乘 312 TFLOP/s，非矩阵乘的 FP32 只有 19.5 TFLOP/s"——<strong>每个非矩阵乘 FLOP 比矩阵乘贵 16 倍</strong>。所以：</p>
+<ol>
+<li><strong>减少非矩阵乘运算</strong>：循环里不除 ℓ，最后才除；只存 LSE 一个数而不是 m 和 ℓ 两个；</li>
+<li><strong>多一个并行维度</strong>（§3.2）：FA1 只在 batch 和 head 上并行（一个 block 一个头）；长序列时 batch × head 太少，A100 的 108 个 SM 吃不满（第 2 章的"block 太少"）。FA2 <strong>把 Q 按行分块，不同 Q 块给不同的 block</strong>——这是天然独立的（第 2 章：block 之间不需要通信）；</li>
+<li><strong>warp 之间的分工</strong>：一个 block 内，FA1 把 K、V 切给不同 warp（"split-K"），最后要通过 shared memory 合并；FA2 改成<strong>把 Q 切给不同 warp</strong>，每个 warp 各自算完自己的行，不需要 warp 间通信，shared memory 读写大减。</li>
+</ol>
+<p>结果：比 FA1 快 2–3 倍，A100 上达到峰值的 50–73%（论文 §4〔数字按论文摘要〕）。但 FA2 在 H100 上只有 <strong>35%</strong> 的利用率（FA3 摘要）——它没用上 Hopper 的新硬件。</p>
+<h3 id="fa3h100fp82026-11-14">第四步：FA3（H100）——异步、重叠、FP8（2026-11-14）</h3>
+<p>FA3 摘要列了三招，全是第 16–18 章的内容：</p>
+<ol>
+<li><strong>warp specialization</strong>（§3.1）：生产者 warpgroup 用 TMA 把 K、V 块装进 s 级环形缓冲区；消费者 warpgroup 做 wgmma 和 softmax（第 18 章的结构，算法 1）。还加了<strong>乒乓调度</strong>：两个消费者 warpgroup 错开——一个在做 softmax（用 MUFU 算 exp）时，另一个在用 Tensor Core 做 GEMM，两种硬件同时忙；</li>
+<li><strong>warpgroup 内 GEMM 与 softmax 重叠</strong>（§3.2）：本来"算 S → softmax → 算 PV"严格串行。FA3 跨迭代流水：第 j 块的 softmax 和第 j+1 块的 <span class="arithmatex">\(QK^\top\)</span> GEMM 同时进行（多用一些寄存器存中间结果）；</li>
+<li><strong>FP8</strong>（§3.3）：块量化 + "incoherent processing"（乘一个随机正交矩阵把离群值摊平）降低 FP8 误差。</li>
+</ol>
+<p>结果：FP16 达到 <strong>740 TFLOP/s（H100 峰值的 75%）</strong>，FP8 接近 <strong>1.2 PFLOP/s</strong>；FP8 版误差比普通 FP8 attention 低 2.6 倍（FA3 摘要）。</p>
+<h3 id="fa4b200-exp-shared-memory2026-11-14">第五步：FA4（B200）——瓶颈换成了 exp 和 shared memory（2026-11-14）</h3>
+<p>FA4 摘要的核心观察：Blackwell 上<strong>硬件提升不对称</strong>——Tensor Core 吞吐翻倍，但 shared memory 带宽、exp 单元没怎么涨。于是瓶颈变了。</p>
+<p>FA4 §3.1.1 的"feeds and speeds"算账（每 SM 每周期：Tensor Core 8192 FLOP、exp 单元 16 次）。tile M = N = d = 128：</p>
+<div class="arithmatex">\[T_{\text{MMA}} = \frac{4MNd}{8192} = \frac{4 \times 128^3}{8192} = 1024 \text{ 周期}\]</div>
+<div class="arithmatex">\[T_{\exp} = \frac{MN}{16} = \frac{128^2}{16} = 1024 \text{ 周期}\]</div>
+<p><strong>exp 和矩阵乘一样慢！</strong> softmax 不再是"顺带的小运算"。FA4 的对策：</p>
+<ol>
+<li><strong>用 FMA 单元多项式近似 exp</strong>（软件模拟），分走一部分 exp 给 CUDA core，提高总 exp 吞吐；</li>
+<li><strong>条件 rescale</strong>：online softmax 里只有当最大值真的变大到一定程度时才做 <span class="arithmatex">\(O \leftarrow e^{m - m'} O\)</span> 的修正，跳过大部分不必要的 rescale；</li>
+<li><strong>完全异步的流水线 + 更大的 tile</strong>：tcgen05 单线程发起、累加器在 TMEM（第 20 章）；</li>
+<li>反向传播用 <strong>TMEM 和 2-CTA MMA</strong> 减少 shared memory 流量和原子加。</li>
+</ol>
+<p>结果：B200 BF16 最高 <strong>1613 TFLOP/s（71% 利用率）</strong>，比 cuDNN 9.13 快最多 1.3 倍、比 Triton 快 2.7 倍。整个 FA4 用 <strong>CuTe DSL（Python）</strong> 写，编译比 C++ 模板快 20–30 倍（FA4 摘要）。</p>
+<h3 id="2026-11-14">第六步：四代对照（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>FA1</th>
+<th>FA2</th>
+<th>FA3</th>
+<th>FA4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>目标硬件</td>
+<td>A100 及更早</td>
+<td>A100</td>
+<td>H100</td>
+<td>B200</td>
+</tr>
+<tr>
+<td>核心问题</td>
+<td>显存读写 <span class="arithmatex">\(O(N^2)\)</span></td>
+<td>非矩阵乘 FLOP 贵 16 倍；SM 吃不满</td>
+<td>没用上异步硬件</td>
+<td>exp 和 shared 带宽跟不上 Tensor Core</td>
+</tr>
+<tr>
+<td>主要手段</td>
+<td>分块 + online softmax + 反向重计算</td>
+<td>晚除 ℓ、Q 维并行、按 Q 分 warp</td>
+<td>TMA + wgmma + warp 专业化 + 乒乓 + FP8</td>
+<td>多项式 exp、条件 rescale、TMEM、2-CTA</td>
+</tr>
+<tr>
+<td>对应本书章节</td>
+<td>13、21</td>
+<td>2、3、10</td>
+<td>16–18</td>
+<td>20</td>
+</tr>
+</tbody>
+</table>
+<p>一条主线：<strong>每一代硬件换了瓶颈，算法就跟着改。</strong> 这也是第 9 章 roofline 分析的意义——先算出瓶颈在哪，再动手。</p>
+<h3 id="flashattention-q-kv">动画演示：FlashAttention 的一个 Q 块怎么扫过 K、V</h3>
+<p><img alt="FlashAttention" src="../animations/22-flashattention.gif" /></p>
+<p>可交互版：<a href="../animations/22-flashattention.html">animations/22-flashattention.html</a>。开关：<strong>标准 attention / FlashAttention</strong>。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>左上 Q（按行分块），上方 Kᵀ 和右边 V（按块分），中间是 S 的 N × N 网格；</li>
+<li>标准模式：整个 S 被算出并"写回显存"（整片变红），显存计数器暴涨；</li>
+<li>FlashAttention 模式：一个 Q 块依次和每个 K 块相乘，只在片上出现一小块 S，算完立刻用掉；右边的 m、ℓ 记分板随之更新，O 被反复"打折 + 累加"；</li>
+<li>底部对比两种方式的显存读写字节数。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：N = 32768、d = 128、BF16、32 个头、batch = 1。标准 attention 的 S 矩阵一共多大？FlashAttention 需要额外存的 LSE 一共多大？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：FlashAttention 的输出 O 在每处理一个 K 块后都要乘 <span class="arithmatex">\(e^{m - m_{\text{new}}}\)</span>。用两个 K 块、每行只有一个 query 的情形，解释为什么不乘这个因子结果就错了。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：按 FA4 的"每 SM 每周期 Tensor Core 8192 FLOP、exp 16 次"，tile 改成 M = 256、N = d = 128 时，<span class="arithmatex">\(T_{\text{MMA}}\)</span> 和 <span class="arithmatex">\(T_{\exp}\)</span> 各是多少周期？为什么说 exp 已经成了和矩阵乘同等重要的瓶颈？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>标准 attention 慢在 N 乘 N：中间矩阵比输入大几十倍，还要写回显存；<br />
+FlashAttention：分块搬进片上，online softmax 边算边改账，连 O 一起打折，最后除一次 ℓ；不近似、不落地、反向重算；<br />
+FA2 晚除 ℓ、按 Q 再并行；FA3 搬算分工、乒乓重叠、上 FP8；FA4 发现 exp 跟不上，多项式顶上、能不 rescale 就不 rescale；<br />
+每一代硬件换瓶颈，算法跟着换。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C52（FlashAttention 的核心：分块 + online softmax + O 的 rescale；不写出 S / P；反向重计算，只存 LSE）</li>
+<li>C53（FA2 / FA3 / FA4 各针对的瓶颈与主要手段）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ FA2 论文 §2.3、§3</td>
+<td><code>text/flashattention-2.txt</code> 第 138–469 行</td>
+<td>算法 1（前向）、反向、三个改动的原文</td>
+</tr>
+<tr>
+<td>★ FA3 论文 §3</td>
+<td><code>text/flashattention-3.txt</code> 第 201–447 行</td>
+<td>warp 专业化算法、2 级 GEMM–softmax 流水、FP8</td>
+</tr>
+<tr>
+<td>★ FA4 论文 §3.1</td>
+<td><code>text/flashattention-4.txt</code> 第 203–414 行</td>
+<td>roofline 算账、多项式 exp、条件 rescale</td>
+</tr>
+<tr>
+<td>GPU MODE L36、L80</td>
+<td><code>text/gpu-mode-lecture-36-cutlass-and-flash-attention-3.txt</code>、<code>text/gpu-mode-lecture-80-how-flashattention-4-works.txt</code></td>
+<td>作者讲解字幕</td>
+</tr>
+<tr>
+<td>Oxford FlashAttention 讲义</td>
+<td><code>text/oxford-FlashAttention.txt</code></td>
+<td>课堂版推导</td>
+</tr>
+<tr>
+<td>ThunderKittens 论文</td>
+<td><code>text/thunderkittens.txt</code></td>
+<td>另一种写 attention 的 tile 原语</td>
+</tr>
+<tr>
+<td>CS336 a2</td>
+<td><code>cs336-spring2025/materials/</code> 的 assignment2</td>
+<td>用 Triton 写 FlashAttention-2 前向 / 反向（M8 与 a2 合并做）</td>
+</tr>
+<tr>
+<td>cutile-rs tutorial 06 flash-attention</td>
+<td><code>code/nvidia-cuda-rust/repo/</code></td>
+<td>Tile 模型写法对照</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>O 的修正</strong>：设前 <span class="arithmatex">\(j\)</span> 块后未归一化输出 <span class="arithmatex">\(\tilde O^{(j)} = \sum_{k \le j} e^{S_k - m^{(j)}} V_k\)</span>；读入第 <span class="arithmatex">\(j+1\)</span> 块、<span class="arithmatex">\(m^{(j+1)} = \max(m^{(j)}, \text{rowmax}(S_{j+1}))\)</span>，则 <span class="arithmatex">\(\tilde O^{(j+1)} = e^{m^{(j)} - m^{(j+1)}} \tilde O^{(j)} + e^{S_{j+1} - m^{(j+1)}} V_{j+1}\)</span>，最终 <span class="arithmatex">\(O = \tilde O / \ell\)</span>。</li>
+<li><strong>FLOP 数</strong>：前向两个 GEMM，共 <span class="arithmatex">\(4N^2 d\)</span>（每个头，不含 causal mask）；causal 时约减半。</li>
+<li><strong>FA4 的 roofline</strong>：<span class="arithmatex">\(T_{\text{MMA}} = 4MNd / 8192\)</span>，<span class="arithmatex">\(T_{\exp} = MN / 16\)</span>；比值 <span class="arithmatex">\(T_{\text{MMA}} / T_{\exp} = d / 128\)</span>——d = 128 时两者相等，d 越小 exp 越成瓶颈。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>attention</td>
+<td><span class="arithmatex">\(O = \text{softmax}(QK^\top / \sqrt{d}) V\)</span></td>
+</tr>
+<tr>
+<td>每步更新</td>
+<td><span class="arithmatex">\(m' = \max(m, \text{rowmax}(S))\)</span>；<span class="arithmatex">\(\ell \leftarrow e^{m - m'}\ell + \text{rowsum}(e^{S - m'})\)</span>；<span class="arithmatex">\(\tilde O \leftarrow e^{m - m'}\tilde O + e^{S - m'} V\)</span></td>
+</tr>
+<tr>
+<td>收尾</td>
+<td><span class="arithmatex">\(O = \tilde O / \ell\)</span>；<span class="arithmatex">\(\text{LSE} = m + \log \ell\)</span></td>
+</tr>
+<tr>
+<td>显存占用</td>
+<td>标准 <span class="arithmatex">\(O(N^2)\)</span>；FlashAttention <span class="arithmatex">\(O(N)\)</span></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch22_flashattention.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch22_flashattention.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真正的 FlashAttention kernel 要 GPU [GPU]；这里用 NumPy 按块写一遍前向算法）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch22_flashattention.py   # 一步一步打印  
+uv run pytest tests/test_ch19_23.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 中间矩阵</td>
+<td>8192 × 8192 × 2 B</td>
+<td><code>sizes(8192, 128)</code></td>
+<td>Q/K/V/O 各 2 MB，S/P 各 128 MB，64 倍</td>
+</tr>
+<tr>
+<td>第二步 分块前向</td>
+<td>online softmax 连同 O 打折</td>
+<td><code>flash_forward(Q, K, V, 16, 16)</code> vs <code>attention(Q, K, V)</code></td>
+<td>完全一致（不是近似）</td>
+</tr>
+<tr>
+<td>第二步 LSE</td>
+<td><span class="arithmatex">\(m + \log \ell\)</span></td>
+<td><code>flash_forward(...)[1]</code></td>
+<td>= <code>log Σ e^S</code></td>
+</tr>
+<tr>
+<td>第三步 A100</td>
+<td>312 ÷ 19.5</td>
+<td><code>312 / 19.5</code></td>
+<td>16</td>
+</tr>
+<tr>
+<td>第五步 FA4</td>
+<td><span class="arithmatex">\(4MNd / 8192\)</span>、<span class="arithmatex">\(MN / 16\)</span></td>
+<td><code>fa4_cycles(128, 128, 128)</code></td>
+<td>1024、1024 周期</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">S = q @ K[j:j + bc].T                        # br × bc，留在片上
+m_new = np.maximum(m, S.max(axis=1))
+P = np.exp(S - m_new[:, None])
+scale = np.exp(m - m_new)                    # 旧账按新基准打折
+l = scale * l + P.sum(axis=1)
+o = scale[:, None] * o + P @ V[j:j + bc]     # O 也一起打折
+m = m_new
+O[i:i + br] = o / l[:, None]                 # 最后统一除一次 ℓ（FA2）
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>这里没有除以 √d</strong>：讲义第一步写的公式是 <span class="arithmatex">\(S = QK^\top\)</span>，代码照抄；真实 attention 会先乘 <span class="arithmatex">\(1/\sqrt{d}\)</span>，不影响分块算法本身。</li>
+<li><strong>换块大小结果不变</strong>：16 × 16 和 8 × 32 算出同一个 O——分块只改变"一次在片上放多少"，不改变数学结果。</li>
+<li><strong><code>attention</code> 会把整张 N × N 的 S 放进内存</strong>：N = 64 时只有 4096 个数；讲义的 N = 8192 时是 128 MB，这就是 FlashAttention 要解决的问题。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把块大小换成 64 × 64（一次放下整张 S），看 <code>flash_forward</code> 是不是退化成了标准写法。</li>
+<li>把 Q、K 乘 10 让分数变大，确认分块版仍然不溢出、和标准版一致。</li>
+</ul><nav class="pager"><a href="21-online-softmax-fusion.html">← 第 21 章 · online softmax 与算子融合：少读一遍显存就是快</a><a href="23-inference-kernels.html">第 23 章 · 推理 kernel：decode 为什么是 memory-bound，以及 paged KV、split-KV、MLA、megakernel →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 19 章 · CuTe：用 (Shape, Stride) 描述一切数据布局 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="19-cute-shape-stride">第 19 章 · CuTe：用 (Shape, Stride) 描述一切数据布局</h1><p><a class="btn" href="../animations/19-cute-layout.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：第 13–18 章里到处是"第几个线程读哪个地址"的手算下标，CUTLASS 3/4 用什么统一地管理它们？CuTe 的 Layout 为什么只要一对 (Shape, Stride)？列优先、行优先、分块、按线程切分、swizzle 怎么都用同一套写法表达？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/18-hopper-wgmma-warp-specialization.html">第 18 章 Hopper ②</a> · 下一章：<a href="../lessons/20-blackwell-tcgen05.html">第 20 章 Blackwell</a><br />
+对应原文：CuTe 文档（<code>materials/code/cutlass/cute-docs/</code>）：<code>01_layout.md</code>（569 行，构造第 130–220 行、坐标与 colexicographical 顺序第 372–400 行）、<code>02_layout_algebra.md</code>（composition 第 77 行、divide 第 381 行、product 第 482 行）、<code>03_tensor.md</code>（partition 第 276–333 行）、<code>0x_gemm_tutorial.md</code>（sgemm_1 → sgemm_sm80）；GPU MODE L57 CuTe（<code>text/gpu-mode-lecture-57-cute.txt</code>）；Colfax WGMMA / TMA 博客里的 CuTe 用法</p>
+<p>本章缩写：CuTe = CUDA Templates（CUTLASS 3 起的核心布局库，读作 "cute"）· CUTLASS = CUDA Templates for Linear Algebra Subroutines（线性代数子程序的 CUDA 模板库）· TV layout = Thread-Value layout（线程–值布局：哪个线程拿哪些值）· DSL = Domain-Specific Language（领域专用语言）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-14">第一步：所有下标公式都是"坐标点乘步长"（2026-11-14）</h3>
+<p>回顾一下前面手写过的下标：</p>
+<table>
+<thead>
+<tr>
+<th>章</th>
+<th>公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>i = blockIdx.x * blockDim.x + threadIdx.x</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td>行优先 <code>A[r * N + c]</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td>padding <code>tile[r * 33 + c]</code></td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>x = blockIdx.x * 32 + threadIdx.x / 32; y = ... + threadIdx.x % 32</code></td>
+</tr>
+</tbody>
+</table>
+<p>它们都是同一个形状：<strong>把一个多维坐标，和一组步长逐项相乘再相加</strong>，得到一维的位置。CuTe 把这件事抽象成 <strong>Layout</strong>（<code>01_layout.md</code>）：</p>
+<blockquote>
+<p>A <code>Layout</code> is a tuple of (<code>Shape</code>, <code>Stride</code>)……it implements a mapping from any coordinate within the Shape to an index via the Stride.</p>
+</blockquote>
+<p>写法是 <code>Shape : Stride</code>，例如 <code>(4, 2) : (1, 4)</code>。坐标 <span class="arithmatex">\((i, j)\)</span> 映射到</p>
+<div class="arithmatex">\[\text{index} = i \cdot 1 + j \cdot 4\]</div>
+<p><strong>数字演示</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>Layout</th>
+<th>含义</th>
+<th>(0,0)</th>
+<th>(1,0)</th>
+<th>(0,1)</th>
+<th>(3,1)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>(4,2):(1,4)</code></td>
+<td>4 × 2 列优先：一列内相邻元素相差 1</td>
+<td>0</td>
+<td>1</td>
+<td>4</td>
+<td>7</td>
+</tr>
+<tr>
+<td><code>(4,2):(2,1)</code></td>
+<td>4 × 2 行优先：一行内相邻元素相差 1</td>
+<td>0</td>
+<td>2</td>
+<td>1</td>
+<td>7</td>
+</tr>
+<tr>
+<td><code>(4,2):(1,5)</code></td>
+<td>列优先，每列多 1 个 padding</td>
+<td>0</td>
+<td>1</td>
+<td>5</td>
+<td>8</td>
+</tr>
+</tbody>
+</table>
+<p>同一个"4 × 2 的矩阵"，换个 Stride 就换了存储方式，<strong>用它的代码一个字都不用改</strong>——这正是文档开头说的："a row-major MxN layout and a column-major MxN layout can be treated identically in software."</p>
+<p>不写 Stride 时默认 <code>LayoutLeft</code>：步长是 Shape 从左往右的累乘（第 159 行），即"广义列优先"。注意这和 C 数组的行优先习惯相反。</p>
+<h3 id="shape2026-11-14">第二步：层次化 Shape——一个维度还能再拆（2026-11-14）</h3>
+<p>CuTe 的 Shape 和 Stride 可以<strong>嵌套</strong>（IntTuple 的递归定义）：<code>(4, (2, 2)) : (2, (1, 8))</code>。第二维看起来是"4 个"，其实内部又分成 2 × 2，各有自己的步长。</p>
+<p>这能表达普通二维下标写不出来的布局，比如"每 2 列交错存放"、Tensor Core fragment 里线程和元素的复杂对应（第 15 章的 Figure 82 就是这样一个 layout）。</p>
+<p><strong>一维坐标怎么对应多维坐标？</strong> CuTe 用 <strong>colexicographical 顺序</strong>（<code>01_layout.md</code> 第 381 行：从右往左读、最左边的维变化最快）：对 Shape (4, 2)，一维坐标 0, 1, 2, 3, 4… 对应 (0,0), (1,0), (2,0), (3,0), (0,1)…。于是每个 Layout 都可以当作"一维下标 → 位置"的函数来用。</p>
+<h3 id="layout-2026-11-14">第三步：layout 代数——分块就是除法（2026-11-14）</h3>
+<p>把 layout 看成函数，就可以对它做运算（<code>02_layout_algebra.md</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>运算</th>
+<th>意思</th>
+<th>用在哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>composition</strong> <code>A ∘ B</code></td>
+<td>先用 B 把坐标变一次，再交给 A：函数复合</td>
+<td>重排、reshape、swizzle</td>
+</tr>
+<tr>
+<td><strong>logical_divide</strong> <code>A / tile</code></td>
+<td>把 A 按 tile 切块：结果第一维是"块内"，第二维是"第几块"</td>
+<td>第 13 章的 block tile、第 14 章的 thread tile</td>
+</tr>
+<tr>
+<td><strong>logical_product</strong> <code>A × B</code></td>
+<td>把 A 复制 B 次排成更大的布局</td>
+<td>一个 MMA 原子重复铺满整个 warp tile</td>
+</tr>
+<tr>
+<td><strong>complement</strong></td>
+<td>A 没覆盖到的那部分</td>
+<td>divide 的内部实现</td>
+</tr>
+</tbody>
+</table>
+<p><strong>例子</strong>：一个 8 × 8 的矩阵按 4 × 4 分块，<code>zipped_divide(layout, Shape&lt;_4,_4&gt;{})</code> 得到形如 <code>((4,4), (2,2))</code> 的 layout——第一维是块内坐标，第二维是块号。block <code>(bx, by)</code> 只要取第二维固定为 <code>(bx, by)</code> 的那一片，就拿到了自己的 tile，<strong>再也不用手写 <code>blockIdx.x * BM + ...</code></strong>。</p>
+<h3 id="tensor-2026-11-14">第四步：Tensor 与按线程切分（2026-11-14）</h3>
+<p><strong>Tensor = 指针 + Layout</strong>（<code>03_tensor.md</code>）。有了 Tensor，GEMM 的一层层分块写成（<code>0x_gemm_tutorial.md</code> 的 <code>sgemm_1.cu</code>）：</p>
+<pre><code class="language-cpp">Tensor mA = make_tensor(make_gmem_ptr(A), make_shape(M, K), dA);          // 整个 A
+Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step&lt;_1, X, _1&gt;{});     // 本 block 的 tile（沿 K 还有多块）
+Tensor sA = make_tensor(make_smem_ptr(smemA), sA_layout);                 // shared 里的 tile
+Tensor tAgA = local_partition(gA, tA, threadIdx.x);                       // 本线程负责搬的那部分
+Tensor tAsA = local_partition(sA, tA, threadIdx.x);
+copy(tAgA(_,_,k), tAsA);                                                  // 搬
+</code></pre>
+<p><code>tA</code> 是一个<strong>线程布局</strong>（比如 32 × 8 个线程怎么排），<code>local_partition</code> 用它把 tile 切给每个线程——第 6 章"让 threadIdx.x 对应最快变化的那一维"变成了"选一个合适的线程 layout"。</p>
+<p>再往上一层，CuTe 把硬件指令包装成 <strong>Atom</strong>（<code>0t_mma_atom.md</code>）：<code>MMA_Atom</code> 描述一条 <code>mma.sync</code> / <code>wgmma</code> / <code>tcgen05.mma</code> 需要的 TV layout（哪个线程拿哪些值），<code>Copy_Atom</code> 描述一条 <code>cp.async</code> / <code>ldmatrix</code> / TMA。再用 <code>TiledMMA</code>、<code>TiledCopy</code> 把原子铺满整个 tile。<strong>换架构时主要是换 Atom，算法结构不用变</strong>——这就是 <code>sgemm_1 → sgemm_2 → sgemm_sm80 → hopper/wgmma_tma_sm90</code> 那条教程线的意义（study-plan M6）。</p>
+<h3 id="swizzle-layout2026-11-14">第五步：swizzle 也是一个 layout（2026-11-14）</h3>
+<p>第 7、15 章的 swizzle（地址异或重排防 bank conflict）在 CuTe 里是 <code>Swizzle&lt;B, M, S&gt;</code> 函数，和普通 layout <strong>复合</strong>：<code>composition(Swizzle&lt;3,3,3&gt;{}, smem_layout)</code>。TMA 的 tensor map 里选的 128B swizzle 模式、wgmma 要求的 shared memory 布局（Colfax WGMMA 博客 "SMEM layout constraints"），在 CuTe 里就是几个预定义的 layout atom。</p>
+<h3 id="cute-dsl2026-11-14">第六步：为什么值得学，以及 CuTe DSL（2026-11-14）</h3>
+<ul>
+<li><strong>CUTLASS 3/4 全部建立在 CuTe 上</strong>；FlashAttention-3 用 CuTe C++，FlashAttention-4、Quack 用 <strong>CuTe DSL</strong>（Python 写，编译快 20–30 倍，02 生态 自测题 3）。读这些代码，绕不开 layout 记号。</li>
+<li><strong>Rust 没有对应物</strong>（03 Rust vs C++ §3），这是 C++ / Python 路线目前的独有优势。</li>
+<li>学习曲线陡：先把 <code>(Shape):(Stride)</code> 和 divide 弄熟，再看 TiledMMA。GPU MODE L57 是一个很好的入门讲座。</li>
+</ul>
+<h3 id="layout">动画演示：同一个矩阵，三种 layout</h3>
+<p><img alt="CuTe layout" src="../animations/19-cute-layout.gif" /></p>
+<p>可交互版：<a href="../animations/19-cute-layout.html">animations/19-cute-layout.html</a>。开关：<strong>Layout</strong>（列优先 <code>(4,8):(1,4)</code> / 行优先 <code>(4,8):(8,1)</code> / padding <code>(4,8):(1,5)</code> / 2 × 2 分块 <code>((2,2),(2,4)):((1,4),(2,8))</code>）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>左边是 4 × 8 的逻辑坐标网格，右边是一维内存（0–39）；</li>
+<li>每一帧按 colexicographical 顺序点亮一个坐标，画出它映射到的内存位置，显示 <code>index = Σ coord × stride</code> 的算式；</li>
+<li>切换 layout：逻辑网格不变，内存里的排列变了；</li>
+<li>分块 layout 下，同一个 2 × 2 小块的 4 个元素在内存里连续。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：Layout <code>(3, 4) : (4, 1)</code> 是行优先还是列优先？坐标 (2, 1) 映射到几？按 colexicographical 顺序，一维坐标 5 对应哪个二维坐标、映射到几？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：第 7 章的 <code>__shared__ float tile[32][33]</code>（按 C 的习惯 <code>tile[r][c]</code>）写成 CuTe Layout 是什么？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：为什么说"换架构时主要换 Atom"？结合第 15–18 章说说从 Ampere 到 Hopper，GEMM 里哪两类 Atom 换了、各换成了什么。</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>下标都是坐标点乘步长：Layout = Shape : Stride；<br />
+不写步长默认左边快（列优先），和 C 数组反着来；<br />
+形状能嵌套，一维也能拆两半；<br />
+分块是除法，铺满是乘法，重排是复合，swizzle 也是一个 layout；<br />
+Tensor = 指针 + Layout；硬件指令包成 Atom，换卡只换 Atom。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C45（CuTe Layout = (Shape, Stride)，index = Σ coord × stride；默认 LayoutLeft；colexicographical 顺序）</li>
+<li>C46（layout 代数：composition / divide / product 的用途；Tensor = 指针 + Layout；MMA_Atom / Copy_Atom）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ <code>01_layout.md</code></td>
+<td><code>code/cutlass/cute-docs/01_layout.md</code></td>
+<td>Layout 的定义、构造、打印、坐标体系</td>
+</tr>
+<tr>
+<td>★ <code>02_layout_algebra.md</code></td>
+<td>同目录；composition 第 77 行、divide 第 381 行、product 第 482 行</td>
+<td>layout 代数，配大量手算例子</td>
+</tr>
+<tr>
+<td>★ GPU MODE L57 CuTe</td>
+<td><code>text/gpu-mode-lecture-57-cute.txt</code></td>
+<td>讲座字幕，比文档好入门</td>
+</tr>
+<tr>
+<td><code>03_tensor.md</code></td>
+<td>同目录；partition 第 276–333 行</td>
+<td>Tensor、tile、slice、按线程切分</td>
+</tr>
+<tr>
+<td><code>0x_gemm_tutorial.md</code></td>
+<td>同目录；sgemm_1 第 7 行起、TiledCopy / TiledMMA 第 379–438 行</td>
+<td>完整 GEMM 一步步怎么写（M6 里程碑）</td>
+</tr>
+<tr>
+<td><code>0t_mma_atom.md</code>、<code>0z_tma_tensors.md</code></td>
+<td>同目录</td>
+<td>MMA Atom、TMA 在 CuTe 里的表示</td>
+</tr>
+<tr>
+<td><code>cute-dsl-docs/</code></td>
+<td><code>code/cutlass/cute-dsl-docs/</code></td>
+<td>Python 版 CuTe（FA4、Quack 用的）</td>
+</tr>
+<tr>
+<td>Colfax 三篇博客</td>
+<td><code>text/blog-colfax-*.txt</code></td>
+<td>CuTe 在 TMA / WGMMA / TMEM 上的实际用法</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>Layout 是函数</strong>：<span class="arithmatex">\(L: \mathbb{Z}^{\text{shape}} \to \mathbb{Z}\)</span>，<span class="arithmatex">\(L(c) = \sum_i c_i s_i\)</span>（对嵌套 shape 递归展开）。</li>
+<li><strong>colexicographical 一维化</strong>：Shape <span class="arithmatex">\((n_0, n_1, \dots)\)</span> 下，一维坐标 <span class="arithmatex">\(x\)</span> 对应 <span class="arithmatex">\(c_0 = x \bmod n_0\)</span>，<span class="arithmatex">\(c_1 = \lfloor x / n_0 \rfloor \bmod n_1\)</span>，……</li>
+<li><strong>composition</strong>：<span class="arithmatex">\((A \circ B)(c) = A(B(c))\)</span>；divide 用 composition 加 complement 定义（<code>02_layout_algebra.md</code> 第 381–414 行）。</li>
+<li><strong>cosize</strong>：<span class="arithmatex">\(L(\text{size}-1) + 1\)</span>，layout 实际用到的内存跨度（padding 时大于 size）。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>建 layout</td>
+<td><code>auto L = make_layout(make_shape(4, 2), make_stride(1, 4));</code></td>
+</tr>
+<tr>
+<td>用 layout</td>
+<td><code>int idx = L(i, j);</code>；<code>print_layout(L);</code></td>
+</tr>
+<tr>
+<td>建 tensor</td>
+<td><code>Tensor t = make_tensor(make_gmem_ptr(p), L);</code></td>
+</tr>
+<tr>
+<td>取 block tile</td>
+<td><code>local_tile(mA, tiler, coord, Step&lt;_1, X, _1&gt;{})</code></td>
+</tr>
+<tr>
+<td>按线程切分</td>
+<td><code>local_partition(gA, thr_layout, threadIdx.x)</code></td>
+</tr>
+<tr>
+<td>swizzle</td>
+<td><code>composition(Swizzle&lt;3,3,3&gt;{}, smem_layout)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch19_cute_layout.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch19_cute_layout.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（CuTe 本身是 C++ 模板 / CuTe DSL；这里用几十行 Python 模拟它的下标算法）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch19_cute_layout.py   # 一步一步打印  
+uv run pytest tests/test_ch19_23.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 三种 Stride</td>
+<td>index = <span class="arithmatex">\(\sum\)</span> 坐标 × 步长</td>
+<td><code>Layout((4, 2), (1, 4))(c)</code> 等</td>
+<td>(1,0)→1/2/1，(0,1)→4/1/5，(3,1)→7/7/8</td>
+</tr>
+<tr>
+<td>第一步 默认 Stride</td>
+<td>LayoutLeft</td>
+<td><code>Layout((4, 2))</code></td>
+<td>(4, 2):(1, 4)</td>
+</tr>
+<tr>
+<td>第二步 colexicographic</td>
+<td>最左边的维变化最快</td>
+<td><code>idx2crd(i, (4, 2))</code></td>
+<td>0..7 → (0,0)(1,0)(2,0)(3,0)(0,1)…</td>
+</tr>
+<tr>
+<td>第二步 嵌套</td>
+<td><code>(4,(2,2)):(2,(1,8))</code></td>
+<td><code>Layout(...)((1, (1, 1)))</code></td>
+<td>2 + 1 + 8 = 11</td>
+</tr>
+<tr>
+<td>第三步 按 tile 切块</td>
+<td><code>zipped_divide</code></td>
+<td><code>zipped_divide_2d(8, 8, (4, 4))</code></td>
+<td>形状 ((4,4),(2,2))；块 (1,0) 等于直接切片</td>
+</tr>
+<tr>
+<td>第五步 swizzle</td>
+<td><code>Swizzle&lt;3,3,3&gt;</code></td>
+<td><code>swizzle(i)</code></td>
+<td>0..511 的一个排列</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">class Layout:
+    def __init__(self, shape, stride=None):
+        self.stride = stride or left_strides(shape)   # 默认：Shape 从左往右累乘
+    def __call__(self, coord):
+        if isinstance(coord, int):                     # 一维坐标 → 多维（colex）
+            coord = idx2crd(coord, self.shape)
+        return sum(c * d for c, d in zip(flatten(coord), flatten(self.stride)))
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>NumPy 默认是行优先，CuTe 默认是列优先</strong>：验证分块时要写 <code>np.arange(64).reshape(8, 8, order="F")</code>（F = Fortran 顺序，即列优先），不然对不上。</li>
+<li><strong>嵌套坐标先摊平再点乘</strong>：<code>(1, (1, 1))</code> 摊平成 1、1、1，和摊平的步长 2、1、8 点乘——这就是"层次化 Shape"在计算上的全部意思。</li>
+<li><strong><code>zipped_divide_2d</code> 只是 2D 的特例</strong>：CuTe 的 <code>logical_divide</code> 对任意嵌套 layout 都成立，靠的是 complement 和 composition；这里只演示结果长什么样。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>zipped_divide_2d(8, 8, (4, 4))</code> 换成按 2 × 4 分块，看结果的形状和块 (1, 1) 的下标。</li>
+<li>把 <code>swizzle</code> 的参数换成 (2, 3, 3)、(3, 4, 3)，看前 80 个数怎么排。</li>
+</ul><nav class="pager"><a href="18-hopper-wgmma-warp-specialization.html">← 第 18 章 · Hopper ②：wgmma、warp specialization 与 persistent kernel</a><a href="20-blackwell-tcgen05.html">第 20 章 · Blackwell：tcgen05、Tensor Memory、2-SM MMA 与块缩放低精度 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>附录 · 缩写与术语表 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="_1">附录 · 缩写与术语表</h1>
+<blockquote>
+<p>用途：讲义里遇到缩写或术语，先查这一页。每章开头的"本章缩写"只列这一章用到的。整理日期：2026-11-14（全书 27 章写完后统一补齐）。</p>
+</blockquote>
+<h2 id="_2">缩写 · 硬件与平台</h2>
+<table>
+<thead>
+<tr>
+<th>缩写</th>
+<th>全称</th>
+<th>意思</th>
+<th>第一次出现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CUDA</td>
+<td>Compute Unified Device Architecture</td>
+<td>计算 / 统一 / 设备 / 架构：NVIDIA 的 GPU 通用计算平台</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>GPU / CPU</td>
+<td>Graphics / Central Processing Unit</td>
+<td>图形 / 中央 处理单元</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>SM</td>
+<td>Streaming Multiprocessor</td>
+<td>流式 / 多处理器：GPU 里的一个"车间"，一个 block 只在一个 SM 上跑</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>GPC</td>
+<td>Graphics Processing Cluster</td>
+<td>图形 / 处理 / 集群：若干 SM 组成的硬件组，cluster 的物理基础</td>
+<td><a href="../lessons/02-block-scheduling.html">第 2 章</a></td>
+</tr>
+<tr>
+<td>CTA</td>
+<td>Cooperative Thread Array</td>
+<td>协作 / 线程 / 数组：PTX 和硬件文档对 block 的叫法</td>
+<td><a href="../lessons/02-block-scheduling.html">第 2 章</a></td>
+</tr>
+<tr>
+<td>CC</td>
+<td>Compute Capability</td>
+<td>计算 / 能力：架构版本号（8.0 Ampere、9.0 Hopper、10.0 B200、12.0 RTX 50）</td>
+<td><a href="../lessons/03-warp-simt.html">第 3 章</a></td>
+</tr>
+<tr>
+<td>SIMT</td>
+<td>Single Instruction, Multiple Threads</td>
+<td>单条指令、多个线程</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>SIMD</td>
+<td>Single Instruction, Multiple Data</td>
+<td>单条指令、多个数据：CPU 向量指令的模型</td>
+<td><a href="../lessons/03-warp-simt.html">第 3 章</a></td>
+</tr>
+<tr>
+<td>PCIe</td>
+<td>Peripheral Component Interconnect Express</td>
+<td>外设 / 组件 / 互连 / 高速：CPU 与 GPU 之间的总线</td>
+<td><a href="../lessons/04-host-device-program.html">第 4 章</a></td>
+</tr>
+<tr>
+<td>H2D / D2H</td>
+<td>Host to Device / Device to Host</td>
+<td>主机到设备 / 设备到主机的拷贝方向</td>
+<td><a href="../lessons/04-host-device-program.html">第 4 章</a></td>
+</tr>
+<tr>
+<td>HBM</td>
+<td>High Bandwidth Memory</td>
+<td>高带宽显存：堆叠在 GPU 旁的 DRAM</td>
+<td><a href="../lessons/05-memory-hierarchy.html">第 5 章</a></td>
+</tr>
+<tr>
+<td>DRAM / SRAM</td>
+<td>Dynamic / Static Random-Access Memory</td>
+<td>动态 / 静态随机存储器：显存用前者，片上缓存用后者</td>
+<td><a href="../lessons/05-memory-hierarchy.html">第 5 章</a></td>
+</tr>
+<tr>
+<td>GMEM / SMEM / RMEM</td>
+<td>Global / Shared / Register MEMory</td>
+<td>全局内存（显存）/ 共享内存 / 寄存器</td>
+<td><a href="../lessons/05-memory-hierarchy.html">第 5 章</a></td>
+</tr>
+<tr>
+<td>DSMEM</td>
+<td>Distributed Shared MEMory</td>
+<td>分布式共享内存：cluster 内 block 互访 shared</td>
+<td><a href="../lessons/05-memory-hierarchy.html">第 5 章</a></td>
+</tr>
+<tr>
+<td>L1 / L2</td>
+<td>Level 1 / Level 2 cache</td>
+<td>一级（每 SM）/ 二级（全 GPU）缓存</td>
+<td><a href="../lessons/05-memory-hierarchy.html">第 5 章</a></td>
+</tr>
+<tr>
+<td>TMA</td>
+<td>Tensor Memory Accelerator</td>
+<td>张量 / 内存 / 加速器：Hopper 起的异步整块搬运单元</td>
+<td><a href="../lessons/17-hopper-tma-mbarrier.html">第 17 章</a></td>
+</tr>
+<tr>
+<td>TMEM</td>
+<td>Tensor MEMory</td>
+<td>张量内存：Blackwell 上 Tensor Core 专用的累加器存储</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>MUFU / SFU</td>
+<td>Multi-Function Unit / Special Function Unit</td>
+<td>多功能 / 特殊函数单元：算 exp、sin 等的硬件</td>
+<td><a href="../lessons/22-flashattention.html">第 22 章</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="_3">缩写 · 指令与格式</h2>
+<table>
+<thead>
+<tr>
+<th>缩写</th>
+<th>全称</th>
+<th>意思</th>
+<th>第一次出现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PTX</td>
+<td>Parallel Thread Execution</td>
+<td>并行 / 线程 / 执行：NVIDIA 的虚拟指令集</td>
+<td><a href="../lessons/15-tensor-core-mma.html">第 15 章</a></td>
+</tr>
+<tr>
+<td>SASS</td>
+<td>Streaming ASSembler</td>
+<td>GPU 真正执行的机器码</td>
+<td><a href="../lessons/06-coalescing.html">第 6 章</a></td>
+</tr>
+<tr>
+<td>ISA</td>
+<td>Instruction Set Architecture</td>
+<td>指令集架构</td>
+<td><a href="../lessons/25-compile-deploy.html">第 25 章</a></td>
+</tr>
+<tr>
+<td>LDG / LDS / STS</td>
+<td>LoaD Global / LoaD Shared / STore Shared</td>
+<td>读全局 / 读共享 / 写共享的 SASS 指令；<code>.128</code> 表示一次 128 位</td>
+<td><a href="../lessons/06-coalescing.html">第 6 章</a></td>
+</tr>
+<tr>
+<td>LDGSTS</td>
+<td>LoaD Global, STore Shared</td>
+<td><code>cp.async</code> 对应的 SASS：显存直送 shared</td>
+<td><a href="../lessons/16-async-copy-pipeline.html">第 16 章</a></td>
+</tr>
+<tr>
+<td>FMA</td>
+<td>Fused Multiply-Add</td>
+<td>融合乘加 a × b + c，算 2 个 FLOP</td>
+<td><a href="../lessons/09-roofline-profiling.html">第 9 章</a></td>
+</tr>
+<tr>
+<td>MMA</td>
+<td>Matrix Multiply-Accumulate</td>
+<td>矩阵乘累加 D = A × B + C</td>
+<td><a href="../lessons/15-tensor-core-mma.html">第 15 章</a></td>
+</tr>
+<tr>
+<td>WMMA</td>
+<td>Warp Matrix Multiply-Accumulate</td>
+<td>warp 级矩阵乘累加（C++ API）</td>
+<td><a href="../lessons/15-tensor-core-mma.html">第 15 章</a></td>
+</tr>
+<tr>
+<td>HMMA</td>
+<td>Half-precision MMA</td>
+<td>SASS 里的 Tensor Core 指令名</td>
+<td><a href="../lessons/15-tensor-core-mma.html">第 15 章</a></td>
+</tr>
+<tr>
+<td>wgmma</td>
+<td>WarpGroup MMA</td>
+<td>Hopper 的 warpgroup 级异步矩阵乘</td>
+<td><a href="../lessons/18-hopper-wgmma-warp-specialization.html">第 18 章</a></td>
+</tr>
+<tr>
+<td>tcgen05 / UMMA</td>
+<td>TensorCore generation 5</td>
+<td>Blackwell 第 5 代 Tensor Core 指令族；CUTLASS 叫 UMMA</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>CAS</td>
+<td>Compare-And-Swap</td>
+<td>比较并交换：通用原子操作</td>
+<td><a href="../lessons/11-warp-shuffle-atomics.html">第 11 章</a></td>
+</tr>
+<tr>
+<td>XOR</td>
+<td>eXclusive OR</td>
+<td>按位异或</td>
+<td><a href="../lessons/11-warp-shuffle-atomics.html">第 11 章</a></td>
+</tr>
+<tr>
+<td>FP16 / BF16 / TF32</td>
+<td>16 位浮点 / Brain Float 16 / TensorFloat-32</td>
+<td>5+10 位 / 8+7 位 / Tensor Core 的 19 位有效精度格式</td>
+<td><a href="../lessons/15-tensor-core-mma.html">第 15 章</a></td>
+</tr>
+<tr>
+<td>FP8 / FP6 / FP4</td>
+<td>8 / 6 / 4 位浮点</td>
+<td>E4M3、E5M2、E2M1 = 指数位 + 尾数位</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>MX</td>
+<td>Microscaling</td>
+<td>微缩放（OCP 标准）：32 个元素共享一个 E8M0 缩放因子</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>NVFP4</td>
+<td>NVIDIA FP4</td>
+<td>16 个 E2M1 共享一个 E4M3 缩放因子</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>UE8M0 / UE4M3</td>
+<td>Unsigned E8M0 / E4M3</td>
+<td>无符号缩放因子格式：前者只能表示 2 的幂</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>cubin / fatbin</td>
+<td>CUDA binary / fat binary</td>
+<td>某一代 GPU 的二进制 / 装多份 cubin 和 PTX 的容器</td>
+<td><a href="../lessons/25-compile-deploy.html">第 25 章</a></td>
+</tr>
+<tr>
+<td>sm_XX / compute_XX</td>
+<td>—</td>
+<td>真实架构 / 虚拟架构版本号；<code>a</code> 后缀 = 架构专属，不向前兼容</td>
+<td><a href="../lessons/25-compile-deploy.html">第 25 章</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="_4">缩写 · 软件、库与方法</h2>
+<table>
+<thead>
+<tr>
+<th>缩写</th>
+<th>全称</th>
+<th>意思</th>
+<th>第一次出现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PG</td>
+<td>(CUDA) Programming Guide</td>
+<td>NVIDIA 官方编程指南，本书引用 13.4.2 版的章节号</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>API</td>
+<td>Application Programming Interface</td>
+<td>应用编程接口</td>
+<td><a href="../lessons/04-host-device-program.html">第 4 章</a></td>
+</tr>
+<tr>
+<td>PMPP</td>
+<td>Programming Massively Parallel Processors</td>
+<td>大规模并行处理器编程（Kirk &amp; Hwu 教科书）</td>
+<td><a href="../lessons/10-reduction.html">第 10 章</a></td>
+</tr>
+<tr>
+<td>CCCL / CUB</td>
+<td>CUDA C++ Core Libraries / CUDA UnBound</td>
+<td>CUDA C++ 核心库 / 其中的块级、warp 级原语库</td>
+<td><a href="../lessons/12-scan.html">第 12 章</a></td>
+</tr>
+<tr>
+<td>cuBLAS</td>
+<td>CUDA Basic Linear Algebra Subprograms</td>
+<td>官方线性代数库，GEMM 的性能基线</td>
+<td><a href="../lessons/13-sgemm-tiling.html">第 13 章</a></td>
+</tr>
+<tr>
+<td>GEMM / SGEMM / GEMV</td>
+<td>GEneral Matrix Multiply / Single-precision GEMM / Matrix-Vector</td>
+<td>通用矩阵乘 / 单精度版 / 矩阵乘向量</td>
+<td><a href="../lessons/13-sgemm-tiling.html">第 13 章</a></td>
+</tr>
+<tr>
+<td>BM / BN / BK</td>
+<td>Block tile M / N / K</td>
+<td>block 在三个方向上的 tile 大小</td>
+<td><a href="../lessons/13-sgemm-tiling.html">第 13 章</a></td>
+</tr>
+<tr>
+<td>TM / TN、WM / WN</td>
+<td>Thread / Warp tile M / N</td>
+<td>每线程 / 每 warp 负责的结果块大小</td>
+<td><a href="../lessons/14-sgemm-register-tiling.html">第 14 章</a></td>
+</tr>
+<tr>
+<td>CuTe / CUTLASS</td>
+<td>CUDA Templates / CUDA Templates for Linear Algebra Subroutines</td>
+<td>CUTLASS 的布局库 / NVIDIA 的 GEMM 模板库</td>
+<td><a href="../lessons/19-cute-layout.html">第 19 章</a></td>
+</tr>
+<tr>
+<td>TV layout</td>
+<td>Thread-Value layout</td>
+<td>线程–值布局：哪个线程拿哪些值</td>
+<td><a href="../lessons/19-cute-layout.html">第 19 章</a></td>
+</tr>
+<tr>
+<td>DSL</td>
+<td>Domain-Specific Language</td>
+<td>领域专用语言（Triton、CuTe DSL、TileLang、cuTile、Helion）</td>
+<td><a href="../lessons/19-cute-layout.html">第 19 章</a></td>
+</tr>
+<tr>
+<td>IR / TVM</td>
+<td>Intermediate Representation / Tensor Virtual Machine</td>
+<td>中间表示 / Apache 深度学习编译器（TileLang 后端）</td>
+<td><a href="../lessons/24-tile-dsl.html">第 24 章</a></td>
+</tr>
+<tr>
+<td>NVRTC</td>
+<td>NVIDIA Runtime Compilation</td>
+<td>运行时把 CUDA C++ 编成 PTX 的库</td>
+<td><a href="../lessons/25-compile-deploy.html">第 25 章</a></td>
+</tr>
+<tr>
+<td>JIT</td>
+<td>Just-In-Time</td>
+<td>即时编译</td>
+<td><a href="../lessons/25-compile-deploy.html">第 25 章</a></td>
+</tr>
+<tr>
+<td>PDL</td>
+<td>Programmatic Dependent Launch</td>
+<td>程序化依赖启动：后一个 kernel 提前开始准备</td>
+<td><a href="../lessons/26-streams-graphs-pdl.html">第 26 章</a></td>
+</tr>
+<tr>
+<td>DAG</td>
+<td>Directed Acyclic Graph</td>
+<td>有向无环图</td>
+<td><a href="../lessons/26-streams-graphs-pdl.html">第 26 章</a></td>
+</tr>
+<tr>
+<td>APOD</td>
+<td>Assess, Parallelize, Optimize, Deploy</td>
+<td>评估 / 并行化 / 优化 / 部署：Best Practices 的开发循环</td>
+<td><a href="../lessons/27-methodology-wrap-up.html">第 27 章</a></td>
+</tr>
+<tr>
+<td>FLOP / FLOP/s</td>
+<td>FLoating-point OPeration</td>
+<td>浮点运算 / 每秒浮点运算数</td>
+<td><a href="../lessons/09-roofline-profiling.html">第 9 章</a></td>
+</tr>
+<tr>
+<td>AI（本书专指）</td>
+<td>Arithmetic Intensity</td>
+<td>算术强度：FLOP ÷ 读写字节</td>
+<td><a href="../lessons/09-roofline-profiling.html">第 9 章</a></td>
+</tr>
+<tr>
+<td>SOL</td>
+<td>Speed Of Light</td>
+<td>硬件理论上限</td>
+<td><a href="../lessons/09-roofline-profiling.html">第 9 章</a></td>
+</tr>
+<tr>
+<td>ILP / TLP</td>
+<td>Instruction- / Thread-Level Parallelism</td>
+<td>指令级 / 线程级并行：两种隐藏延迟的办法</td>
+<td><a href="../lessons/08-occupancy.html">第 8 章</a></td>
+</tr>
+<tr>
+<td>FA</td>
+<td>FlashAttention</td>
+<td>第 22 章</td>
+<td><a href="../lessons/22-flashattention.html">第 22 章</a></td>
+</tr>
+<tr>
+<td>LSE</td>
+<td>Log-Sum-Exp</td>
+<td>对数求和指数 <span class="arithmatex">\(m + \log \ell\)</span>，FlashAttention 反向要用</td>
+<td><a href="../lessons/21-online-softmax-fusion.html">第 21 章</a></td>
+</tr>
+<tr>
+<td>CE</td>
+<td>Cross Entropy</td>
+<td>交叉熵</td>
+<td><a href="../lessons/21-online-softmax-fusion.html">第 21 章</a></td>
+</tr>
+<tr>
+<td>KV cache</td>
+<td>Key / Value cache</td>
+<td>之前所有 token 的 K、V</td>
+<td><a href="../lessons/23-inference-kernels.html">第 23 章</a></td>
+</tr>
+<tr>
+<td>GQA / MLA</td>
+<td>Grouped-Query / Multi-head Latent Attention</td>
+<td>分组查询注意力 / 多头潜在注意力（DeepSeek）</td>
+<td><a href="../lessons/23-inference-kernels.html">第 23 章</a></td>
+</tr>
+<tr>
+<td>TPOT</td>
+<td>Time Per Output Token</td>
+<td>每个输出 token 的耗时</td>
+<td><a href="../lessons/23-inference-kernels.html">第 23 章</a></td>
+</tr>
+<tr>
+<td>NumPy</td>
+<td>Numerical Python</td>
+<td>数值 / Python：Python 的数组计算库；每章"代码对照"用它在 CPU 上模拟 GPU 的规则</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>ipynb</td>
+<td>IPython NoteBook</td>
+<td>IPython（交互式 Python）笔记本文件：每章配一本，讲解和代码一格一格跑</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="_5">术语</h2>
+<table>
+<thead>
+<tr>
+<th>术语</th>
+<th>意思</th>
+<th>第一次出现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>host / device</td>
+<td>CPU 和内存 / GPU 和显存</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>kernel</td>
+<td>在 GPU 上运行的函数（<code>__global__</code>），一次启动由很多线程各执行一份</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>thread / block / grid</td>
+<td>线程 / 线程块 / 一次启动的全部 block</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td><code>threadIdx</code> / <code>blockIdx</code> / <code>blockDim</code> / <code>gridDim</code></td>
+<td>线程在 block 内编号 / block 在 grid 内编号 / block 大小 / grid 大小</td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>全局编号</td>
+<td><code>blockIdx.x * blockDim.x + threadIdx.x</code></td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>越界检查 / 向上取整</td>
+<td><code>if (i &lt; n)</code> / <code>(n + B - 1) / B</code></td>
+<td><a href="../lessons/01-thread-hierarchy.html">第 1 章</a></td>
+</tr>
+<tr>
+<td>wave（波）/ 尾部效应</td>
+<td>一次能同时跑的 block 量 / 最后一波不满造成的浪费</td>
+<td><a href="../lessons/02-block-scheduling.html">第 2 章</a></td>
+</tr>
+<tr>
+<td>warp / lane</td>
+<td>32 个线程一组 / 线程在 warp 里的编号 0–31</td>
+<td><a href="../lessons/03-warp-simt.html">第 3 章</a></td>
+</tr>
+<tr>
+<td>warp divergence（分岔）</td>
+<td>warp 内线程走不同分支，各分支依次执行、其余 lane 屏蔽</td>
+<td><a href="../lessons/03-warp-simt.html">第 3 章</a></td>
+</tr>
+<tr>
+<td>锁页内存（pinned）</td>
+<td>不会被换出到磁盘的 host 内存，DMA 可直接搬，异步拷贝的前提</td>
+<td><a href="../lessons/04-host-device-program.html">第 4 章</a></td>
+</tr>
+<tr>
+<td>local memory / spill</td>
+<td>线程私有但物理在显存的变量空间 / 寄存器不够时溢出到那里</td>
+<td><a href="../lessons/05-memory-hierarchy.html">第 5 章</a></td>
+</tr>
+<tr>
+<td>合并访存（coalescing）</td>
+<td>warp 的 32 个地址合并成尽量少的 32 字节传输</td>
+<td><a href="../lessons/06-coalescing.html">第 6 章</a></td>
+</tr>
+<tr>
+<td>sector（箱）</td>
+<td>显存一次传输的 32 字节</td>
+<td><a href="../lessons/06-coalescing.html">第 6 章</a></td>
+</tr>
+<tr>
+<td>bank / bank conflict</td>
+<td>shared memory 的 32 个通道 / 同 bank 不同地址时排队</td>
+<td><a href="../lessons/07-shared-memory-banks.html">第 7 章</a></td>
+</tr>
+<tr>
+<td>padding / swizzle</td>
+<td>每行多放一点 / 地址异或重排：两种消除 bank conflict 的办法</td>
+<td><a href="../lessons/07-shared-memory-banks.html">第 7 章</a></td>
+</tr>
+<tr>
+<td>occupancy（占用率）</td>
+<td>驻留 warp 数 ÷ 最大驻留 warp 数</td>
+<td><a href="../lessons/08-occupancy.html">第 8 章</a></td>
+</tr>
+<tr>
+<td>roofline / 脊点</td>
+<td>min(峰值算力, 强度 × 带宽) / 两条线的交点</td>
+<td><a href="../lessons/09-roofline-profiling.html">第 9 章</a></td>
+</tr>
+<tr>
+<td>compute / memory / overhead-bound</td>
+<td>算不过来 / 搬不过来 / GPU 在等 CPU 或启动</td>
+<td><a href="../lessons/09-roofline-profiling.html">第 9 章</a></td>
+</tr>
+<tr>
+<td>归约（reduction）</td>
+<td>用结合运算把一串数并成一个</td>
+<td><a href="../lessons/10-reduction.html">第 10 章</a></td>
+</tr>
+<tr>
+<td>grid-stride loop</td>
+<td>步长为整个 grid 线程数的循环</td>
+<td><a href="../lessons/10-reduction.html">第 10 章</a></td>
+</tr>
+<tr>
+<td>warp shuffle</td>
+<td>warp 内线程直接读对方寄存器</td>
+<td><a href="../lessons/11-warp-shuffle-atomics.html">第 11 章</a></td>
+</tr>
+<tr>
+<td>原子操作</td>
+<td>不可分的读–改–写</td>
+<td><a href="../lessons/11-warp-shuffle-atomics.html">第 11 章</a></td>
+</tr>
+<tr>
+<td>scan（前缀和）</td>
+<td>每个位置 = 前面所有数的和；inclusive / exclusive</td>
+<td><a href="../lessons/12-scan.html">第 12 章</a></td>
+</tr>
+<tr>
+<td>tiling（分块）</td>
+<td>把数据切成小块搬进更快的存储反复用</td>
+<td><a href="../lessons/13-sgemm-tiling.html">第 13 章</a></td>
+</tr>
+<tr>
+<td>外积（outer product）</td>
+<td>一列 × 一行 = 一个小矩阵，寄存器分块的内循环</td>
+<td><a href="../lessons/14-sgemm-register-tiling.html">第 14 章</a></td>
+</tr>
+<tr>
+<td>warptiling</td>
+<td>在 block tile 与 thread tile 之间加一层 warp tile</td>
+<td><a href="../lessons/14-sgemm-register-tiling.html">第 14 章</a></td>
+</tr>
+<tr>
+<td>Tensor Core / fragment</td>
+<td>专做小矩阵乘的单元 / 分在 warp 各线程寄存器里的矩阵片段</td>
+<td><a href="../lessons/15-tensor-core-mma.html">第 15 章</a></td>
+</tr>
+<tr>
+<td>双缓冲 / 多级流水线</td>
+<td>两份或多份 buffer 轮转，搬下一块时算这一块</td>
+<td><a href="../lessons/16-async-copy-pipeline.html">第 16 章</a></td>
+</tr>
+<tr>
+<td>异步 barrier / 相位</td>
+<td>先 arrive、后 wait 的栅栏 / 每轮完成后翻转的状态位</td>
+<td><a href="../lessons/16-async-copy-pipeline.html">第 16 章</a></td>
+</tr>
+<tr>
+<td>tensor map</td>
+<td>TMA 用的张量描述符（形状、步长、tile、swizzle）</td>
+<td><a href="../lessons/17-hopper-tma-mbarrier.html">第 17 章</a></td>
+</tr>
+<tr>
+<td>mbarrier</td>
+<td>按 arrive 次数和交易字节计数的 shared 栅栏</td>
+<td><a href="../lessons/17-hopper-tma-mbarrier.html">第 17 章</a></td>
+</tr>
+<tr>
+<td>thread block cluster / multicast</td>
+<td>绑定同时调度的相邻 block / TMA 一次读写进多个 block</td>
+<td><a href="../lessons/17-hopper-tma-mbarrier.html">第 17 章</a></td>
+</tr>
+<tr>
+<td>warpgroup</td>
+<td>4 个连续 warp（128 线程）</td>
+<td><a href="../lessons/18-hopper-wgmma-warp-specialization.html">第 18 章</a></td>
+</tr>
+<tr>
+<td>warp specialization</td>
+<td>warp 分工：生产者只搬、消费者只算</td>
+<td><a href="../lessons/18-hopper-wgmma-warp-specialization.html">第 18 章</a></td>
+</tr>
+<tr>
+<td>persistent kernel</td>
+<td>block 数 = SM 数，每个 block 循环处理多个 tile</td>
+<td><a href="../lessons/18-hopper-wgmma-warp-specialization.html">第 18 章</a></td>
+</tr>
+<tr>
+<td>Layout（CuTe）</td>
+<td>(Shape, Stride)：坐标 → 位置的函数</td>
+<td><a href="../lessons/19-cute-layout.html">第 19 章</a></td>
+</tr>
+<tr>
+<td>2-SM MMA / CTA pair</td>
+<td>两个 SM 合作做一个 MMA</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>块缩放（block scaling）</td>
+<td>每小块元素共享一个缩放因子的低精度格式</td>
+<td><a href="../lessons/20-blackwell-tcgen05.html">第 20 章</a></td>
+</tr>
+<tr>
+<td>online softmax</td>
+<td>边读边更新最大值和分母的 softmax</td>
+<td><a href="../lessons/21-online-softmax-fusion.html">第 21 章</a></td>
+</tr>
+<tr>
+<td>算子融合（fusion）/ epilogue</td>
+<td>多个运算写进一个 kernel / GEMM 写回前的附加运算</td>
+<td><a href="../lessons/21-online-softmax-fusion.html">第 21 章</a></td>
+</tr>
+<tr>
+<td>prefill / decode</td>
+<td>一次处理整段 prompt / 一次生成一个 token</td>
+<td><a href="../lessons/23-inference-kernels.html">第 23 章</a></td>
+</tr>
+<tr>
+<td>paged attention / split-KV</td>
+<td>KV cache 分页 + 页表 / 序列切段并行再合并</td>
+<td><a href="../lessons/23-inference-kernels.html">第 23 章</a></td>
+</tr>
+<tr>
+<td>megakernel</td>
+<td>把整个前向融成一个 persistent kernel</td>
+<td><a href="../lessons/23-inference-kernels.html">第 23 章</a></td>
+</tr>
+<tr>
+<td>Tile 模型</td>
+<td>按 block 写 tile 运算、由编译器映射到线程的编程模型</td>
+<td><a href="../lessons/24-tile-dsl.html">第 24 章</a></td>
+</tr>
+<tr>
+<td>stream / event</td>
+<td>有序任务队列 / 队列里的时间点标记</td>
+<td><a href="../lessons/26-streams-graphs-pdl.html">第 26 章</a></td>
+</tr>
+<tr>
+<td>CUDA Graph</td>
+<td>录一次、重放多次的操作图</td>
+<td><a href="../lessons/26-streams-graphs-pdl.html">第 26 章</a></td>
+</tr>
+</tbody>
+</table>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 1 章 · 一个 kernel 怎么分给成千上万个线程：grid / block / thread 与全局编号 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="1-kernel-grid-block-thread">第 1 章 · 一个 kernel 怎么分给成千上万个线程：grid / block / thread 与全局编号</h1><p><a class="btn" href="../animations/01-thread-index.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：CPU 上一个 <code>for</code> 循环做完的事，放到 GPU 上怎么写？启动 kernel 时那串 <code>&lt;&lt;&lt;4, 256&gt;&gt;&gt;</code> 是什么意思？每个线程怎么知道自己该处理第几个数？<br />
+讲解日期：2026-11-10 · 上一章：无 · 下一章：第 2 章 block 的独立性与 SM 调度（待讲）<br />
+对应原文：Programming Guide（PG）13.4.2 §1.2.2.1、§2.1.2.2、§2.1.2.3（<code>materials/text/cuda-programming-guide.txt</code> 第 1000–1058、1622–1760 行）；Oxford lec1 第 19–24 页（<code>materials/text/oxford-lec1.txt</code> 第 278–372 行）</p>
+<p>本章缩写：CUDA = Compute Unified Device Architecture（计算 / 统一 / 设备 / 架构）· GPU = Graphics Processing Unit（图形 / 处理 / 单元）· CPU = Central Processing Unit（中央 / 处理 / 单元）· SM = Streaming Multiprocessor（流式 / 多处理器）· SIMT = Single Instruction, Multiple Threads（单条指令、多个线程）· PG = Programming Guide（编程指南）· NumPy = Numerical Python（数值 / Python：数组计算库，附录"代码对照"用它在 CPU 上模拟）</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="2026-11-10">第一步：从"一个人跑循环"到"一人一个数"（2026-11-10）</h3>
+<p><strong>先看 CPU 怎么做向量加法</strong>：</p>
+<pre><code class="language-cpp">for (int i = 0; i &lt; n; i++)
+    c[i] = a[i] + b[i];
+</code></pre>
+<p>一个 CPU 核心从 <code>i = 0</code> 跑到 <code>i = n-1</code>，一次算一个。n = 100 万就要跑 100 万轮。</p>
+<p><strong>GPU 的思路反过来</strong>：不写循环，只写<strong>循环体</strong>——"处理一个数"的代码——然后一次叫来 100 万个线程，<strong>每个线程执行一遍循环体，各自负责一个 <code>i</code></strong>。这个"只写循环体、交给很多线程执行"的函数就叫 <strong>kernel</strong>，用 <code>__global__</code> 标记：</p>
+<pre><code class="language-cpp">__global__ void vecAdd(float* a, float* b, float* c) {
+    int i = ???;          // 我是谁？我负责第几个数？
+    c[i] = a[i] + b[i];
+}
+</code></pre>
+<p>所有线程跑的是<strong>同一份代码</strong>，唯一不同的是 <code>i</code>。所以整件事的关键就是那个 <code>???</code>：<strong>每个线程怎么算出自己的 <code>i</code></strong>。Oxford lec1 第 22 页原话是代码要 "written from the point of view of a single thread"（从单个线程的角度来写）。</p>
+<h3 id="grid-block-thread2026-11-10">第二步：线程分三层——grid / block / thread（2026-11-10）</h3>
+<p>100 万个线程不是一盘散沙，CUDA 把它们分成三层（PG §1.2.2.1）：</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>是什么</th>
+<th>编号 / 大小</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>grid</strong>（网格）</td>
+<td>一次 kernel 启动的全部线程</td>
+<td>里面有 <code>gridDim.x</code> 个 block</td>
+</tr>
+<tr>
+<td><strong>block</strong>（线程块）</td>
+<td>一组线程；<strong>所有 block 一样大</strong></td>
+<td>自己的编号 <code>blockIdx.x</code>，从 0 到 <code>gridDim.x - 1</code>；每个 block 有 <code>blockDim.x</code> 个线程</td>
+</tr>
+<tr>
+<td><strong>thread</strong>（线程）</td>
+<td>一个线程</td>
+<td>在本 block 里的编号 <code>threadIdx.x</code>，从 0 到 <code>blockDim.x - 1</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>类比：一所学校考试。</strong></p>
+<ul>
+<li>grid = 整所学校；</li>
+<li>block = 一间教室，<strong>每间教室座位数一样</strong>（blockDim）；</li>
+<li>thread = 一个座位上的考生；</li>
+<li><code>blockIdx</code> = 教室号，<code>threadIdx</code> = 座位号，两者都从 0 开始数。</li>
+</ul>
+<p><strong>为什么要分出"教室"这一层？</strong> PG 原文：一个 block 的所有线程都放在<strong>同一个 SM</strong>（GPU 里的一个计算"车间"）上执行，所以同一个 block 的线程能用片上的 shared memory 交换数据、能互相等待；不同 block 之间则不行（第 2 章细讲）。现在只要记住：<strong>block 是"能互相配合的一组线程"</strong>。</p>
+<p><strong>启动时用 <code>&lt;&lt;&lt; &gt;&gt;&gt;</code> 说清楚分几间教室、每间几个座位</strong>（PG §2.1.2.2，叫 execution configuration，执行配置）：</p>
+<pre><code class="language-cpp">vecAdd&lt;&lt;&lt;4, 256&gt;&gt;&gt;(a, b, c);
+//       ↑   ↑
+//       |   blockDim.x = 256：每个 block 256 个线程
+//       gridDim.x = 4：一共 4 个 block
+// 总线程数 = 4 × 256 = 1024
+</code></pre>
+<p>在 kernel 里面，这四个量都能直接读到：<code>gridDim</code>、<code>blockDim</code>（启动时给的尺寸）和 <code>blockIdx</code>、<code>threadIdx</code>（每个线程自己的编号）。它们其实各有 <code>.x / .y / .z</code> 三个分量（可以排成二维、三维），本章只用 <code>.x</code>，没写的维度默认是 1。</p>
+<h3 id="2026-11-10_1">第三步：算出自己的全局编号（2026-11-10）</h3>
+<p>考生要从"教室号 + 座位号"算出<strong>全校唯一的准考证号</strong>：前面的教室全部坐满，一共 <code>教室号 × 每间座位数</code> 人，再加上自己的座位号。</p>
+<div class="arithmatex">\[i = \texttt{blockIdx.x} \times \texttt{blockDim.x} + \texttt{threadIdx.x}\]</div>
+<p>读法：i 等于"block 编号乘 block 大小，再加线程在 block 里的编号"。</p>
+<p><strong>数字演示 1（PG §2.1.2.3 的例子）</strong>：<code>&lt;&lt;&lt;4, 256&gt;&gt;&gt;</code>，向量长 1024。</p>
+<table>
+<thead>
+<tr>
+<th>block</th>
+<th><code>blockIdx.x × 256</code></th>
+<th>这个 block 的线程负责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>0</td>
+<td>元素 0–255（<code>i</code> 就等于 <code>threadIdx.x</code>）</td>
+</tr>
+<tr>
+<td>1</td>
+<td>256</td>
+<td>元素 256–511</td>
+</tr>
+<tr>
+<td>2</td>
+<td>512</td>
+<td>元素 512–767</td>
+</tr>
+<tr>
+<td>3</td>
+<td>768</td>
+<td>元素 768–1023</td>
+</tr>
+</tbody>
+</table>
+<p><strong>数字演示 2（Oxford lec1 第 21 页）</strong>：4 个 block、每个 64 线程。第 1 号 block 里的第 44 号线程：</p>
+<div class="arithmatex">\[i = 1 \times 64 + 44 = 108\]</div>
+<p>于是 kernel 补全成：</p>
+<pre><code class="language-cpp">__global__ void vecAdd(float* a, float* b, float* c) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    c[i] = a[i] + b[i];
+}
+</code></pre>
+<p>每个线程算出不同的 <code>i</code>，1024 个线程正好把 0–1023 全覆盖、不重不漏。</p>
+<h3 id="n-2026-11-10">第四步：n 不是整数倍怎么办——向上取整 + 越界检查（2026-11-10）</h3>
+<p>真实数据长度很少正好是 256 的倍数。比如 <strong>n = 1000</strong>，block 还是 256 个线程：</p>
+<ol>
+<li><strong>host 端：block 数要向上取整。</strong> 1000 / 256 = 3.9，只开 3 个 block 只有 768 个线程，最后 232 个数没人算。所以要开 4 个：</li>
+</ol>
+<p>$<span class="arithmatex">\(\texttt{gridDim.x} = \left\lceil \frac{n}{B} \right\rceil = \frac{n + B - 1}{B}\ \text{（整数除法）} = \frac{1000 + 255}{256} = 4\)</span>$</p>
+<p><code>(n + B - 1) / B</code> 是 C/C++ 里向上取整的标准写法；Rust 里直接写 <code>n.div_ceil(B)</code>（本仓库 <code>solutions/cubecl-lab/src/lib.rs</code> 的 <code>vec_add</code> 就是这么写的）。</p>
+<ol start="2">
+<li><strong>kernel 端：多出来的线程要"举手不答题"。</strong> 4 × 256 = 1024 个线程，比 1000 多 24 个。编号 1000–1023 的线程如果照样执行 <code>c[i] = a[i] + b[i]</code>，就会读写数组外面的内存——轻则结果被污染，重则程序崩溃。所以加一行<strong>越界检查</strong>（PG §2.1.2.3.1 Bounds Checking）：</li>
+</ol>
+<p><code>cpp
+   __global__ void vecAdd(float* a, float* b, float* c, int n) {
+       int i = blockIdx.x * blockDim.x + threadIdx.x;
+       if (i &lt; n)                  // 编号超出数据长度的线程什么也不做
+           c[i] = a[i] + b[i];
+   }
+   // host 端
+   int B = 256;
+   vecAdd&lt;&lt;&lt;(n + B - 1) / B, B&gt;&gt;&gt;(a, b, c, n);</code></p>
+<p>这两件事永远成对出现：<strong>host 向上取整保证"人够"，kernel 越界检查保证"多的人不捣乱"</strong>。</p>
+<p><strong>顺带一句 block 大小怎么选</strong>：PG §1.2.2.2 建议 block 的线程数取 <strong>32 的倍数</strong>（128、256 最常见），因为硬件按 32 个线程一组（叫 warp）执行，不是 32 的倍数时最后一组会有空位。warp 是第 2 章的内容，这里先记住"取 32 的倍数"。</p>
+<h3 id="_2">动画演示：线程编号怎么对到数据下标</h3>
+<p><img alt="线程编号 → 数据下标" src="../animations/01-thread-index.gif" /></p>
+<p>可交互版：<a href="../animations/01-thread-index.html">animations/01-thread-index.html</a>（要能点按钮，需要用本地服务打开，见 <a href="../animations/index.html">animations/README.md</a>"跑起来看"）。两个开关：<strong>block 大小</strong>（4 / 8 / 16）、<strong>数据长度 n</strong>（27 / 32）。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>上面一排方块是线程，按 block 分组框起来；下面一排是数组元素；</li>
+<li>每一帧点亮一个 block，它的线程用竖线连到自己负责的元素，右边的公式框用这个 block 里的一个线程演示 <code>i = blockIdx.x × blockDim.x + threadIdx.x</code>；</li>
+<li>最后一帧红色的线程是 <code>i ≥ n</code> 的那几个，<code>if (i &lt; n)</code> 不成立，什么也不做；</li>
+<li>做题 2 之前先别拨开关，答完再把 block 大小和 n 换一换，数一数空转的线程。</li>
+</ol>
+<h2 id="_3">练习与作答记录</h2>
+<p><strong>题 1</strong>：<code>kernel&lt;&lt;&lt;3, 128&gt;&gt;&gt;(...)</code> 启动后，一共有几个线程？<code>blockIdx.x = 2</code>、<code>threadIdx.x = 5</code> 的线程负责第几个元素？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：n = 1000，block 大小取 128。<code>gridDim.x</code> 应该是多少？一共开了多少个线程？有几个线程会因为越界检查什么也不做？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：如果 kernel 里忘了写 <code>if (i &lt; n)</code>，上一题的情况下会发生什么？如果 host 端忘了向上取整，直接写 <code>n / 128</code>，又会发生什么？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_4">口诀</h2>
+<blockquote>
+<p>只写循环体，一人领一个；<br />
+学校分教室，教室分座位：grid 套 block，block 套 thread；<br />
+准考证号 = 教室号 × 每间座位数 + 座位号；<br />
+人数向上取整，多的人举手不答题（<code>if (i &lt; n)</code>）。</p>
+</blockquote>
+<h2 id="_5">本章复习卡片</h2>
+<ul>
+<li>C01（三层结构与 <code>&lt;&lt;&lt;gridDim, blockDim&gt;&gt;&gt;</code>）</li>
+<li>C02（全局编号公式与 1 × 64 + 44 = 108）</li>
+<li>C03（向上取整 + 越界检查，成对出现）</li>
+</ul>
+<h2 id="_6">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_7">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ CUDA Programming Guide 13.4.2</td>
+<td>§1.2.2.1 Thread Blocks and Grids（<code>text/cuda-programming-guide.txt</code> 第 1000–1058 行）；§2.1.2.2–2.1.2.3.1（第 1622–1760 行）</td>
+<td>本章内容的官方原文：三层结构、执行配置、四个内置变量、越界检查</td>
+</tr>
+<tr>
+<td>★ Oxford CUDA lec1</td>
+<td>第 19–24 页（<code>text/oxford-lec1.txt</code> 第 278–372 行）；配套 prac1（<code>courses/oxford-cuda-giles/</code>）</td>
+<td>最短的入门讲法 + 第一个可编译的练习（<code>my_first_kernel</code>，需要 NVIDIA GPU）</td>
+</tr>
+<tr>
+<td>★ 本仓库 cubecl-lab M0</td>
+<td><code>solutions/cubecl-lab/src/lib.rs</code> 的 <code>vec_add</code></td>
+<td>在 Mac 上真跑同一个 kernel：<code>ABSOLUTE_POS</code> = 全局编号，<code>CubeCount</code> = gridDim，<code>CubeDim</code> = blockDim；study-plan 的 M0 任务就是把 block 改成 32 / 1024 看还对不对</td>
+</tr>
+<tr>
+<td>NVIDIA Accelerated Computing Hub「CUDA C++ Tutorial」</td>
+<td>前两节</td>
+<td>官方 Jupyter 练习，T4 就能跑（Brev / Colab），见 04 调研 §1.3</td>
+</tr>
+<tr>
+<td>PMPP 第 5 版</td>
+<td>ch.2（Heterogeneous data parallel computing）、ch.3（Multidimensional grids and data）</td>
+<td>教科书版讲法；ch.3 讲二维 / 三维编号（处理图像、矩阵时用）</td>
+</tr>
+<tr>
+<td>srush/GPU-Puzzles</td>
+<td>Puzzle 1–8</td>
+<td>用 Python 练线程编号，Mac / Colab 可做</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_8">数学原理</h3>
+<ul>
+<li><strong>向上取整</strong>：<span class="arithmatex">\(\lceil n/B \rceil = \lfloor (n + B - 1)/B \rfloor\)</span>。理由：设 <span class="arithmatex">\(n = qB + r\)</span>（<span class="arithmatex">\(0 \le r &lt; B\)</span>）。<span class="arithmatex">\(r = 0\)</span> 时加上 <span class="arithmatex">\(B-1\)</span> 不够再进一位，结果是 <span class="arithmatex">\(q\)</span>；<span class="arithmatex">\(r \ge 1\)</span> 时 <span class="arithmatex">\(r + B - 1 \ge B\)</span>，正好多进一位，结果是 <span class="arithmatex">\(q + 1\)</span>。</li>
+<li><strong>全局编号不重不漏</strong>：block <span class="arithmatex">\(b\)</span> 覆盖区间 <span class="arithmatex">\([bB,\ bB + B - 1]\)</span>，相邻 block 首尾相接，所以 <span class="arithmatex">\(\{bB + t \mid 0 \le b &lt; G,\ 0 \le t &lt; B\}\)</span> 恰好是 <span class="arithmatex">\(0\)</span> 到 <span class="arithmatex">\(GB - 1\)</span> 每个整数各一次。这就是"二维编号（教室, 座位）→ 一维编号"的行优先展开，和二维数组 <code>A[b][t]</code> 存成一维 <code>A[b*B + t]</code> 是同一回事。</li>
+</ul>
+<h3 id="_9">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>公式 / 代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>启动</td>
+<td><code>kernel&lt;&lt;&lt;gridDim, blockDim&gt;&gt;&gt;(args);</code> 总线程数 = gridDim × blockDim</td>
+</tr>
+<tr>
+<td>全局编号（一维）</td>
+<td><code>int i = blockIdx.x * blockDim.x + threadIdx.x;</code></td>
+</tr>
+<tr>
+<td>block 数（向上取整）</td>
+<td><code>(n + B - 1) / B</code>；Rust：<code>n.div_ceil(B)</code></td>
+</tr>
+<tr>
+<td>越界检查</td>
+<td><code>if (i &lt; n) { ... }</code></td>
+</tr>
+<tr>
+<td>CubeCL 对照</td>
+<td><code>ABSOLUTE_POS</code> = 全局编号，<code>CUBE_POS_X</code> = <code>blockIdx.x</code>，<code>UNIT_POS_X</code> = <code>threadIdx.x</code>，<code>CUBE_DIM_X</code> = <code>blockDim.x</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_10">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>NumPy（Numerical Python：数值 / Python，Python 的数组计算库）。Mac 上没有 NVIDIA GPU，所以代码对照不写真正的 CUDA，而是用 NumPy 在 CPU 上<strong>模拟</strong>同样的规则（线程编号、32 字节一箱、32 个 bank……），把讲义里的数字算一遍；测试负责核对和讲义一致。uv 是 Python 的项目和依赖管理工具，<code>uv run</code> 会自动装好 NumPy。从这一章起每章附录都有这一节。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch01_thread_index.py</code>，配套测试 <code>tests/test_ch01_06.py</code>；同一章的 notebook：<code>notebooks/ch01_thread_index.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch01_thread_index.py   # 一步一步打印  
+uv run pytest tests/test_ch01_06.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第二、三步 <code>&lt;&lt;&lt;4, 256&gt;&gt;&gt;</code></td>
+<td><span class="arithmatex">\(i = b \times 256 + t\)</span></td>
+<td><code>launch_indices(4, 256)</code>：广播出 4 × 256 的编号表</td>
+<td>block 0–3 各管 0–255、256–511、512–767、768–1023</td>
+</tr>
+<tr>
+<td>第三步 Oxford 例子</td>
+<td><span class="arithmatex">\(1 \times 64 + 44\)</span></td>
+<td><code>global_index(1, 64, 44)</code></td>
+<td>108</td>
+</tr>
+<tr>
+<td>第四步 向上取整</td>
+<td><span class="arithmatex">\(\lceil 1000 / 256 \rceil\)</span></td>
+<td><code>ceil_div(1000, 256)</code>，即 <code>(n + B - 1) // B</code></td>
+<td>4；开 1024 个线程，24 个越界</td>
+</tr>
+<tr>
+<td>第四步 越界检查</td>
+<td><code>if (i &lt; n)</code></td>
+<td><code>vec_add(a, b, 256)</code>：先 <code>i = i[i &lt; n]</code> 再加</td>
+<td>和 <code>a + b</code> 一样；去掉检查 → <code>IndexError</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">block_idx = np.arange(grid_dim)[:, None]   # 每一行是一个 block（教室号）
+thread_idx = np.arange(block_dim)[None, :]  # 每一列是一个座位号
+i = block_idx * block_dim + thread_idx      # 广播：一次算出所有线程的 i
+grid = (n + B - 1) // B                     # host：向上取整，保证&quot;人够&quot;
+i = i[i &lt; n]                                # kernel：多的人举手不答题
+c[i] = a[i] + b[i]
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>"一次启动所有线程"在代码里就是一次广播</strong>：<code>launch_indices</code> 返回一张 grid × block 的表，第 b 行第 t 列就是 <code>blockIdx.x = b</code>、<code>threadIdx.x = t</code> 的那个线程算出的 i。GPU 上这些线程真的同时跑，NumPy 只是一次算完整张表。</li>
+<li><strong>越界在 NumPy 里会报错，在 GPU 上不会</strong>：去掉越界检查时 NumPy 抛 <code>IndexError</code>；GPU 上没有这层保护，越界读写会悄悄碰到别的内存（第 4 章用 compute-sanitizer 查）。</li>
+<li><strong>Python 的 <code>//</code> 是向下取整</strong>：<code>1000 // 256</code> 是 3，所以向上取整要写成 <code>(n + B - 1) // B</code>，和 C++ 的整数除法同一个套路。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>把 <code>launch_indices(4, 256)</code> 换成 <code>launch_indices(4, 8)</code>，打印出来看看每个 block 管哪几个数，和动画里 block 大小 8 的画面对一对。</li>
+<li>把第四步的 n 改成 1024、2000，看越界线程数怎么变。</li>
+</ul><nav class="pager"><span></span><a href="02-block-scheduling.html">第 2 章 · block 为什么必须互不依赖：block 怎么被分到 SM 上 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

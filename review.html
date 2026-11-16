@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>cuda-programming · 复习卡片 · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="index.html">CUDA 从线程到 Tensor Core</a>
+<a href="lessons/index.html">讲义目录</a>
+<a href="animations/index.html">动画</a>
+<a href="review.html">复习卡片</a>
+<a href="lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="cuda-programming">cuda-programming · 复习卡片</h1>
+<p>讲解中卡住、追问、答错的地方，以及必须记住的概念和公式，都会自动追加到这里。每张卡片的"来源"链接到 <a href="lessons/index.html">lessons/</a> 里对应的讲义章节，忘了就回去重读那一章。</p>
+<h2 id="_1">怎么用</h2>
+<ol>
+<li>先只看<strong>问题</strong>，自己说出或写出答案；</li>
+<li>再点开"答案"核对；</li>
+<li>答对了，在"复习记录"里补一个日期；答错了就当天再看一遍。</li>
+</ol>
+<p><strong>复习间隔</strong>（按答对的次数）：第 1 次 → 隔 1 天 → 隔 3 天 → 隔 7 天 → 隔 14 天 → 隔 30 天。连续答对 5 次的卡片移到文末"已掌握"。</p>
+<p>想复习时说一声"复习"，我会挑到期的卡片来考你。</p>
+<hr />
+<h2 id="_2">编程模型</h2>
+<h3 id="c01-kernel-a-b-ab">C01 · 一次 kernel 启动里，线程分成哪三层？<code>&lt;&lt;&lt;A, B&gt;&gt;&gt;</code> 里的 A、B 各是什么？</h3>
+<p>来源：<a href="lessons/01-thread-hierarchy.html">第 1 章</a> · 加入 2026-11-10 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>grid（整次启动）→ block（一组线程）→ thread（一个线程）。所有 block 一样大。</p>
+<p><code>kernel&lt;&lt;&lt;A, B&gt;&gt;&gt;(...)</code>：A = gridDim，grid 里有几个 block；B = blockDim，每个 block 有几个线程。总线程数 = A × B。</p>
+<p>类比：考场。grid = 整个学校，block = 教室，thread = 座位；每间教室座位数一样。</p>
+</details>
+<h3 id="c02-blockdimx-64blockidxx-1threadidxx-44">C02 · 一维情况下，线程的全局编号公式是什么？<code>blockDim.x = 64</code>、<code>blockIdx.x = 1</code>、<code>threadIdx.x = 44</code> 时等于几？</h3>
+<p>来源：<a href="lessons/01-thread-hierarchy.html">第 1 章</a> · 加入 2026-11-10 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p><code>i = blockIdx.x * blockDim.x + threadIdx.x</code></p>
+<p>= 1 × 64 + 44 = <strong>108</strong>（Oxford lec1 第 21 页的例子）。</p>
+<p>读法：前面的教室（block）全部坐满，一共 <code>blockIdx.x × blockDim.x</code> 个人，再加上自己在本教室的座位号。</p>
+</details>
+<h3 id="c03-n-block-b-host-kernel">C03 · 数据长度 n 不是 block 大小 B 的整数倍时，host 和 kernel 各要做哪件事？</h3>
+<p>来源：<a href="lessons/01-thread-hierarchy.html">第 1 章</a> · 加入 2026-11-10 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ul>
+<li>host：block 数用<strong>向上取整</strong> <code>(n + B - 1) / B</code>（Rust 里是 <code>n.div_ceil(B)</code>），保证线程够用；</li>
+<li>kernel：加<strong>越界检查</strong> <code>if (i &lt; n)</code>，多出来的线程什么也不做，否则会读写数组外的内存。</li>
+</ul>
+<p>例：n = 1000，B = 256 → 4 个 block，1024 个线程，最后 24 个线程空转。</p>
+</details>
+<h3 id="c04-block-sm-grid-block">C04 · block 是怎么被派到 SM 上的？为什么同一个 grid 里的 block 之间不能互相等？</h3>
+<p>来源：<a href="lessons/02-block-scheduling.html">第 2 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ul>
+<li>调度器看哪个 SM 还有空位（寄存器、shared、线程数都够）就派过去；派到哪、按什么顺序，程序既不能控制也不能查询；</li>
+<li>一个 block 派给某个 SM 后就在那里<strong>跑到结束</strong>；</li>
+<li>规矩：block 必须能以<strong>任意顺序、并行或串行</strong>执行。如果 block 7 等 block 900，而 900 还没被派出去、7 又占着位置不走，就死锁。</li>
+</ul>
+<p>换来的好处：同一程序在任何 SM 数的 GPU 上都对。block 间要交换数据：拆成两个 kernel、原子操作、或用 cluster。</p>
+</details>
+<h3 id="c05-waveh100-grid-132-block-133">C05 · 什么是 wave（波）和尾部效应？H100 上 grid 从 132 个 block 变成 133 个会怎样？</h3>
+<p>来源：<a href="lessons/02-block-scheduling.html">第 2 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>一次能同时跑的 block 数 = SM 数 × 每 SM 能放的 block 数，叫一波。波数 = ⌈block 数 / 一波的量⌉；最后一波不满时，那段时间部分 SM 闲着，叫尾部效应。</p>
+<p>H100 132 个 SM、每 SM 放 1 个大 block：132 个 → 1 波、100%；133 个 → 2 波，利用率 133 / 264 ≈ 50%，耗时几乎翻倍。经验：block 数要是 SM 数的好几倍；GEMM 用 persistent kernel / Stream-K 对付尾部。</p>
+</details>
+<h3 id="c06-warp-simt-cpu-simd">C06 · warp 是什么？SIMT 和 CPU 的 SIMD 有什么区别？</h3>
+<p>来源：<a href="lessons/03-warp-simt.html">第 3 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>warp = 32 个线程一组，硬件每次给一个 warp 发<strong>一条指令</strong>，32 个线程各用自己的数据执行（SIMT：Single Instruction, Multiple Threads）。</p>
+<p>区别（PG §3.2.2.1）：SIMD 把向量宽度暴露给程序员，要自己装向量、自己处理掩码；SIMT 让你写标量的单线程代码，每个线程可以有自己的分支，由硬件捆起来执行、处理分岔。写对程序时可以不管 warp，想跑快必须管。</p>
+</details>
+<h3 id="c07-warp-if-else">C07 · 一个 warp 里一半线程走 if、一半走 else，会发生什么？怎么避免？</h3>
+<p>来源：<a href="lessons/03-warp-simt.html">第 3 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>warp divergence：warp 把<strong>每条走到的分支都执行一遍</strong>，执行某条分支时不走这条路的 lane 被屏蔽、原地等。两条各耗时 10 的分支总共耗时 20，lane 利用率 50%。</p>
+<p>分岔<strong>只发生在 warp 内部</strong>：让分支条件以 warp 为单位一致（如按 <code>threadIdx.x / 32</code> 分），就没有浪费。block 大小取 32 的倍数，避免最后一个 warp 有空 lane。</p>
+</details>
+<h3 id="c08-warp-32-gpu">C08 · 为什么老代码里"warp 内 32 个线程永远齐步走"的假设在新 GPU 上会出错？</h3>
+<p>来源：<a href="lessons/03-warp-simt.html">第 3 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>CC 7.0（Volta）起是<strong>独立线程调度</strong>：每个线程有自己的程序计数器和调用栈，warp 内可以更细粒度地分开、汇合。依赖隐式齐步走的代码（如不加同步的 warp 内归约）可能算错。</p>
+<p>改法：需要 warp 内同步时显式 <code>__syncwarp()</code>，或用带 <code>_sync</code> 后缀、带 mask 的 warp 函数（<code>__shfl_down_sync</code> 等）。</p>
+</details>
+<h3 id="c09-cuda-api">C09 · 一个完整 CUDA 程序的五步，各用什么 API？</h3>
+<p>来源：<a href="lessons/04-host-device-program.html">第 4 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>① 分配：<code>cudaMalloc</code>（显存）、<code>cudaMallocHost</code>（锁页 host 内存）；
+② 拷进：<code>cudaMemcpy(dst, src, bytes, cudaMemcpyDefault)</code>（H2D）；
+③ 启动：<code>kernel&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(...)</code>；
+④ 同步并拷回：<code>cudaDeviceSynchronize()</code>、<code>cudaMemcpy</code>（D2H）；
+⑤ 释放：<code>cudaFree</code> / <code>cudaFreeHost</code>。</p>
+<p>PCIe 比显存窄几十倍：数据尽量一次运过去、在 GPU 上多做几道。</p>
+</details>
+<h3 id="c10-kernel-cpu-cudagetlasterror">C10 · kernel 启动后 CPU 会等吗？<code>cudaGetLastError()</code> 返回成功说明什么？</h3>
+<p>来源：<a href="lessons/04-host-device-program.html">第 4 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>不等。启动是<strong>异步</strong>的（"下单"），CPU 立刻往下走；要结果或用 CPU 计时器测时间，必须先 <code>cudaDeviceSynchronize()</code>。</p>
+<p><code>&lt;&lt;&lt; &gt;&gt;&gt;</code> 不返回错误码，启动后要调 <code>cudaGetLastError()</code>；它返回成功<strong>只说明启动参数没问题</strong>，不代表 kernel 跑成功。kernel 运行中的错误（如越界）会在之后某个同步点冒出来；调试时在 kernel 后加 <code>cudaDeviceSynchronize()</code> 再查，或用 compute-sanitizer。</p>
+</details>
+<h2 id="_3">内存与性能分析</h2>
+<h3 id="c11-gpu">C11 · GPU 的五层内存各是什么、作用域是谁、谁来管？</h3>
+<p>来源：<a href="lessons/05-memory-hierarchy.html">第 5 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>作用域</th>
+<th>谁管</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>寄存器</td>
+<td>单个线程</td>
+<td>编译器</td>
+</tr>
+<tr>
+<td>shared memory</td>
+<td>一个 block（cluster 内可跨 block）</td>
+<td>你</td>
+</tr>
+<tr>
+<td>L1</td>
+<td>一个 SM</td>
+<td>硬件</td>
+</tr>
+<tr>
+<td>L2</td>
+<td>全 GPU</td>
+<td>硬件</td>
+</tr>
+<tr>
+<td>显存（global）</td>
+<td>所有线程 + host</td>
+<td>你（分配、拷贝、访问模式）</td>
+</tr>
+</tbody>
+</table>
+<p>每往外一层，延迟约高一个数量级、容量大一到两个数量级。H100：每 SM 寄存器 256 KB、shared + L1 共 256 KB（shared 最多 228 KB）、L2 50 MB、HBM3 80 GB。优化一句话：读一次、用很多次。</p>
+</details>
+<h3 id="c12-local-memory-local-memory">C12 · local memory 在哪里？什么情况下变量会被放进 local memory？</h3>
+<p>来源：<a href="lessons/05-memory-hierarchy.html">第 5 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>物理上在<strong>显存</strong>里（"local"指只有本线程可见，不是指位置），延迟和带宽同 global memory。</p>
+<p>三种情况：① 数组下标编译时确定不了；② 结构体 / 数组太大，寄存器放不下；③ 寄存器用超了（spill）。用 <code>nvcc -Xptxas -v</code> 查寄存器数和 spill。</p>
+</details>
+<h3 id="c13-warp-4">C13 · 什么是合并访存？一个 warp 每线程读 4 字节，四种情况各搬几箱？</h3>
+<p>来源：<a href="lessons/06-coalescing.html">第 6 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>显存按 <strong>32 字节一箱（sector）</strong> 读写；一个 warp 的 32 个请求被合并，落在同一箱的只运一次。利用率 = 用到的字节 ÷ 搬来的字节。</p>
+<table>
+<thead>
+<tr>
+<th>访问</th>
+<th>箱数</th>
+<th>利用率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a[i]</code> 相邻</td>
+<td>4</td>
+<td>100%</td>
+</tr>
+<tr>
+<td><code>a[i+1]</code> 错位</td>
+<td>5</td>
+<td>80%</td>
+</tr>
+<tr>
+<td><code>a[2i]</code> 跨步 2</td>
+<td>8</td>
+<td>50%</td>
+</tr>
+<tr>
+<td>间隔 ≥ 32 字节</td>
+<td>32</td>
+<td>12.5%</td>
+</tr>
+</tbody>
+</table>
+<p>跨步 s（≤ 8）：4s 箱，利用率 1/s。地址顺序打乱不影响，只看落在几箱。</p>
+</details>
+<h3 id="c14-shared-memory">C14 · 二维数组怎么写才能合并访存？矩阵转置为什么要经过 shared memory？</h3>
+<p>来源：<a href="lessons/06-coalescing.html">第 6 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>让 <code>threadIdx.x</code> 对应内存里变化最快的那一维（行优先数组的列号）：<code>col = blockIdx.x * blockDim.x + threadIdx.x</code>，访问 <code>A[row * N + col]</code>。</p>
+<p>转置 <code>out[c][r] = in[r][c]</code>：读按行合并，写就必然按列（或反过来）。办法：按行读进 shared memory → 同步 → 在 shared 里按列读 → 按行写出去，两头都合并。</p>
+</details>
+<h3 id="c15-__syncthreads">C15 · <code>__syncthreads()</code> 的两条铁律是什么？</h3>
+<p>来源：<a href="lessons/07-shared-memory-banks.html">第 7 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ol>
+<li>"写完再读"之间要一道栅栏；循环里反复用同一块 shared memory 时，"读完再覆盖"之间也要一道。</li>
+<li>必须被 block 里<strong>所有线程</strong>走到；写在只有部分线程能进的 <code>if</code> 里是未定义行为，常见结果是死锁。</li>
+</ol>
+</details>
+<h3 id="c16-shared-memory-bank-n-bank-conflict">C16 · shared memory 的 bank 怎么映射？什么叫 n 路 bank conflict？跨步访问冲突几路？</h3>
+<p>来源：<a href="lessons/07-shared-memory-banks.html">第 7 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>32 个 bank，每个 4 字节；字地址 w（字节地址 ÷ 4）在 bank <code>w % 32</code>。一个 warp 里多个线程访问<strong>同一 bank 的不同地址</strong>要排队，最多排几个就是几路冲突、耗时几倍；访问<strong>同一地址</strong>是广播，不冲突。</p>
+<p>线程 t 读 <code>s[t * stride]</code>：冲突路数 = gcd(stride, 32)。奇数跨步永远不冲突。</p>
+</details>
+<h3 id="c17-__shared__-float-tile3232">C17 · <code>__shared__ float tile[32][32]</code> 按列读为什么最慢？怎么修？</h3>
+<p>来源：<a href="lessons/07-shared-memory-banks.html">第 7 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p><code>tile[r][c]</code> 的字地址 r·32 + c，bank = c：一整列都在同一个 bank，<strong>32 路冲突</strong>。</p>
+<p>改成 <code>tile[32][33]</code>（每行多 1 个 padding）：bank = (r·33 + c) % 32 = (r + c) % 32，同一列的 32 个 r 落在 32 个不同 bank，无冲突，只多用 3% 空间。Tensor Core 时代常用 swizzle（地址异或）代替 padding。</p>
+</details>
+<h3 id="c18-occupancy-sm-block">C18 · occupancy 的定义？一个 SM 能放几个 block 由哪四道门槛决定？</h3>
+<p>来源：<a href="lessons/08-occupancy.html">第 8 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>occupancy = SM 上驻留的 warp 数 ÷ 最多能驻留的 warp 数（H100 / B200 为 64）。</p>
+<p>四道门槛取最紧的：线程数（每 SM 2048）、block 数（32）、寄存器（65536，按 warp 以 256 为单位取整）、shared memory（228 KB）。</p>
+<p>PG 例：768 线程 / block → 只能放 2 个 → 75%；32 线程 / block → 被 32 个 block 上限卡住 → 50%。想要 100%，每线程最多 32 个寄存器。</p>
+</details>
+<h3 id="c19-gpu-occupancy">C19 · GPU 怎么隐藏显存延迟？occupancy 是不是越高越好？</h3>
+<p>来源：<a href="lessons/08-occupancy.html">第 8 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>两种办法：① <strong>多 warp 轮流</strong>（TLP）：warp 切换零开销，一个在等显存就换另一个；② <strong>单线程多件事在路上</strong>（ILP）：一个线程同时发出多次互不依赖的读或运算。</p>
+<p>不是越高越好：太低一定不好，但 GEMM 这类 kernel 常常 occupancy 只有 12–25%，靠每线程的大寄存器 tile（ILP）照样跑满。occupancy 是诊断指标：慢、warp 都在等显存、occupancy 又低时才去提它。</p>
+</details>
+<h3 id="c20-roofline-h100-bf16">C20 · roofline 公式是什么？H100 BF16 的脊点约多少？向量加法和大矩阵乘各落在哪？</h3>
+<p>来源：<a href="lessons/09-roofline-profiling.html">第 9 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>可达性能 = min(峰值算力, 算术强度 × 显存带宽)，算术强度 = FLOP ÷ 读写字节；脊点 = 峰值 ÷ 带宽。</p>
+<p>H100 BF16 ≈ 989 TFLOP/s ÷ 3.35 TB/s ≈ <strong>295 FLOP/byte</strong>。向量加法 FP32 强度 1/12 → 极度 memory-bound，评价看带宽利用率；N = 4096 的方阵乘强度 2N/(3s)（FP32 约 683）→ compute-bound。</p>
+</details>
+<h3 id="c21-kernel">C21 · 正确测 kernel 时间的五条注意事项？</h3>
+<p>来源：<a href="lessons/09-roofline-profiling.html">第 9 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ol>
+<li>用 CUDA event（或 CPU 计时器前后都 <code>cudaDeviceSynchronize()</code>）；</li>
+<li>先预热（首次调用有加载 / JIT 开销）；</li>
+<li>重复多次取中位数；</li>
+<li>小输入每次之间清 L2，否则测出比显存还快的"带宽"；</li>
+<li>知道 GPU 会降频，Nsight Compute 默认锁频。</li>
+</ol>
+<p>报告有效带宽或 TFLOP/s，并和峰值比。</p>
+</details>
+<h3 id="c22-nsight-systems-nsight-compute-ncu">C22 · Nsight Systems 和 Nsight Compute 各看什么？ncu 报告先看哪几块？</h3>
+<p>来源：<a href="lessons/09-roofline-profiling.html">第 9 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>nsys：整个程序的时间线，先找最耗时的 kernel 和 GPU 空闲的空隙。ncu：单个 kernel 的深度报告。</p>
+<p>ncu 先看：① Speed Of Light（Memory % vs Compute %）；② Roofline；③ Memory Workload（各层流量、sectors / request）；④ Warp State（Long Scoreboard = 等显存，MIO Throttle / Short Scoreboard = shared 压力，Barrier = 等同步）；⑤ Occupancy；⑥ Source 页定位到行。</p>
+</details>
+<h2 id="_4">并行原语</h2>
+<h3 id="c23-block">C23 · block 内树形归约怎么写？为什么"前一半加后一半"比"相邻两两"好？</h3>
+<p>来源：<a href="lessons/10-reduction.html">第 10 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<pre><code class="language-cpp">for (d = blockDim.x / 2; d &gt; 0; d /= 2) { __syncthreads(); if (tid &lt; d) s[tid] += s[tid + d]; }
+</code></pre>
+<p>N 个数 log₂N 轮。</p>
+<p>前一半加后一半：干活的线程是连续的前 d 个，整个 warp 要么全干要么全歇（只剩不到 32 个时才分岔）；连续线程访问连续地址，无 bank conflict；不用取模。相邻两两（<code>tid % (2s) == 0</code>）每个 warp 都分岔、跨步越来越大造成 bank conflict。</p>
+</details>
+<h3 id="c24-grid-stride-loop">C24 · grid-stride loop 怎么写？有什么好处？</h3>
+<p>来源：<a href="lessons/10-reduction.html">第 10 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<pre><code class="language-cpp">for (i = blockIdx.x * blockDim.x + threadIdx.x; i &lt; n; i += gridDim.x * blockDim.x) acc += a[i];
+</code></pre>
+<p>步长 = 整个 grid 的线程数。好处：block 数与数据量无关（不碰 grid 上限）；每圈整个 grid 合并地读一大段；大部分运算在寄存器里完成，shared 和同步开销被摊薄。</p>
+</details>
+<h3 id="c25-warp-shuffle-lane-5-warp">C25 · 四种 warp shuffle 各从哪个 lane 拿值？怎么用 5 步求一个 warp 的和？</h3>
+<p>来源：<a href="lessons/11-warp-shuffle-atomics.html">第 11 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p><code>__shfl_sync</code>（指定 lane，广播）、<code>__shfl_up_sync</code>（lane − d，前缀和）、<code>__shfl_down_sync</code>（lane + d，归约）、<code>__shfl_xor_sync</code>（lane XOR m，蝴蝶归约、全员得结果）。<code>mask</code> 填参与的 lane（通常 <code>0xffffffff</code>）；只能读参与本次 shuffle 的 lane。</p>
+<pre><code class="language-cpp">for (d = 16; d &gt; 0; d &gt;&gt;= 1) v += __shfl_down_sync(0xffffffff, v, d);   // lane 0 得总和
+</code></pre>
+</details>
+<h3 id="c26">C26 · 一个高效的归约分哪四层？</h3>
+<p>来源：<a href="lessons/11-warp-shuffle-atomics.html">第 11 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>① 线程内：grid-stride 循环在寄存器里顺序加；② warp 内：5 次 shuffle；③ block 内：每个 warp 的 lane 0 写进 <code>__shared__ ws[32]</code>，同步后第 0 个 warp 再 shuffle；④ 全局：block 的 0 号线程 <code>atomicAdd</code>（或写部分和再起一个 kernel）。Hopper 还可以在 ③④ 之间加一层 cluster（DSMEM）。</p>
+</details>
+<h3 id="c27">C27 · 原子操作解决什么问题？代价是什么？</h3>
+<p>来源：<a href="lessons/11-warp-shuffle-atomics.html">第 11 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>普通 <code>total += x</code> 是读、改、写三步，并发时会丢更新；<code>atomicAdd</code> 等把三步做成不可分的一步，结果一定对。</p>
+<p>代价：同一地址的原子操作要排队串行。每个 block 一次没问题；每个线程一次加到同一地址很慢——所以要先在 warp / block 内归约。<code>atomicCAS</code> 能拼出任意原子运算，但用它做锁要小心死锁。</p>
+</details>
+<h3 id="c28-inclusive-exclusive-scan-scan">C28 · inclusive 和 exclusive scan 的定义？scan 在并行程序里典型用来干什么？</h3>
+<p>来源：<a href="lessons/12-scan.html">第 12 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>inclusive：v_j = Σ_{i≤j} u_i（含自己）；exclusive：v_j = Σ_{i&lt;j} u_i（不含，v_0 = 0）。<code>[3,1,4,1]</code> → inclusive <code>[3,4,8,9]</code>，exclusive <code>[0,3,4,8]</code>。</p>
+<p>典型用途：<strong>并行决定每个线程写到哪</strong>——每个线程报"我要写几个"，对这些数做 exclusive scan 就是写入起点。过滤、排序、稀疏矩阵、MoE 按专家分组都用它。</p>
+</details>
+<h3 id="c29-hillissteele-blelloch-scan">C29 · Hillis–Steele 和 Blelloch 两种 scan 的轮数和工作量？</h3>
+<p>来源：<a href="lessons/12-scan.html">第 12 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>轮数</th>
+<th>加法次数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hillis–Steele（每轮加上左边隔 2^k 的数）</td>
+<td>log₂N</td>
+<td>≈ N log₂N（不是 work-efficient）</td>
+</tr>
+<tr>
+<td>Blelloch（上扫 + 根清零 + 下扫）</td>
+<td>2 log₂N</td>
+<td>≈ 2N</td>
+</tr>
+</tbody>
+</table>
+<p>N = 8：Hillis–Steele 17 次，Blelloch 14 次。warp 内常用 Hillis–Steele（配 <code>__shfl_up_sync</code>）；跨 block 用三段式或单趟 decoupled look-back（CUB）。</p>
+</details>
+<h2 id="gemm-tensor-core">GEMM 与 Tensor Core</h2>
+<h3 id="c30-sgemm-naive-shared-a6000">C30 · SGEMM 前三步（naive → 合并 → shared 分块）各解决什么问题？A6000 上各到多少？</h3>
+<p>来源：<a href="lessons/13-sgemm-tiling.html">第 13 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ol>
+<li>naive：一个线程算一个 C 元素，每次乘加读 8 字节，且 warp 内读 A 不合并 → 309 GFLOP/s（cuBLAS 的 1.3%）；</li>
+<li>合并：让 warp 里连续线程对应 C 同一行的连续列，A 变广播、B 变合并 → 1987（8.5%），只改了映射；</li>
+<li>shared 分块：block 合作把 A、B 的 32 × 32 小块搬进 shared，每个显存数被用 32 次 → 2980（12.8%）。</li>
+</ol>
+</details>
+<h3 id="c31-shared-memory-tile-t">C31 · shared memory 分块的循环骨架？tile 边长 T 时每个显存数被用几次？</h3>
+<p>来源：<a href="lessons/13-sgemm-tiling.html">第 13 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<pre><code>for 每一段 K: 搬 As、Bs → __syncthreads() → 用 shared 做 T 次乘加 → __syncthreads()
+</code></pre>
+<p>第一个栅栏保证"搬完再算"，第二个保证"大家算完才覆盖"。每个从显存读进来的数被用 <strong>T 次</strong>，显存流量降为 naive 的 1/T。</p>
+</details>
+<h3 id="c32">C32 · 寄存器分块为什么让每线程算一个方块，而不是一列？</h3>
+<p>来源：<a href="lessons/14-sgemm-register-tiling.html">第 14 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>外积写法：每走一步 K，读 A 的一小列 T_M 个、B 的一小行 T_N 个进寄存器，做 T_M × T_N 次乘加。读的是"边"（T_M + T_N），算的是"面积"（T_M T_N）。</p>
+<table>
+<thead>
+<tr>
+<th>每线程</th>
+<th>乘加 ÷ 读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 × 1</td>
+<td>0.5</td>
+</tr>
+<tr>
+<td>8 × 1</td>
+<td>0.89</td>
+</tr>
+<tr>
+<td>8 × 8</td>
+<td>4</td>
+</tr>
+</tbody>
+</table>
+<p>周长相同时正方形面积最大，所以方块最好。代价是寄存器多、occupancy 低，靠 ILP 弥补。</p>
+</details>
+<h3 id="c33-boehm-sgemm-13-937">C33 · Boehm SGEMM 从 1.3% 到 93.7% 的完整路线？</h3>
+<p>来源：<a href="lessons/14-sgemm-register-tiling.html">第 14 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>naive 1.3% → 合并 8.5% → shared 分块 12.8% → 1D 寄存器分块 36.5% → 2D 寄存器分块（外积）68.7% → 向量化（float4、转置 As）78.4% → 自动调参 84.8% → warptiling 93.7%。</p>
+<p>主线：每一层存储都分块（block tile → warp tile → thread tile），让上一层读来的数据在下一层被多次复用。换卡最优参数会变。</p>
+</details>
+<h3 id="c34-tensor-core-fragment-m16n8k16">C34 · Tensor Core 的 fragment 是什么？m16n8k16 每个线程拿多少个元素？</h3>
+<p>来源：<a href="lessons/15-tensor-core-mma.html">第 15 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>Tensor Core 一条指令让一个 warp 合作算一个小矩阵乘；参与的小矩阵分散存在 32 个线程的寄存器里，每个线程手里那一份叫 fragment。WMMA 不公开布局，<code>mma.sync</code> 的布局写在 PTX 里。</p>
+<p>m16n8k16（BF16 进、FP32 累加）：A 16 × 16 每线程 8 个（4 个 32 位寄存器），B 16 × 8 每线程 4 个，D 16 × 8 每线程 4 个 FP32。一条指令 2048 次乘加。</p>
+</details>
+<h3 id="c35-ampere-gemm-swizzle">C35 · Ampere 上高性能 GEMM 的内循环是哪三步？swizzle 解决什么？</h3>
+<p>来源：<a href="lessons/15-tensor-core-mma.html">第 15 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p><code>cp.async</code>（显存 → shared，异步）→ <code>ldmatrix</code>（shared → 寄存器，按 mma 需要的布局一次搬好）→ <code>mma.sync</code>（累加器留在寄存器）。</p>
+<p>swizzle：写 shared 时把列号和行号做异或，让 <code>ldmatrix</code> 的 32 个行地址不落在同一 bank，消除 bank conflict，又不像 padding 那样破坏对齐。</p>
+</details>
+<h3 id="c36-wmma-mmasync-wgmma-tcgen05-mma">C36 · wmma / mma.sync / wgmma / tcgen05 四代 MMA 指令的合作单位和同步性？</h3>
+<p>来源：<a href="lessons/15-tensor-core-mma.html">第 15 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<table>
+<thead>
+<tr>
+<th>代</th>
+<th>指令</th>
+<th>谁发起</th>
+<th>同步性</th>
+<th>累加器</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Volta / Turing</td>
+<td>wmma</td>
+<td>1 个 warp</td>
+<td>同步</td>
+<td>寄存器</td>
+</tr>
+<tr>
+<td>Ampere</td>
+<td>mma.sync</td>
+<td>1 个 warp</td>
+<td>同步</td>
+<td>寄存器</td>
+</tr>
+<tr>
+<td>Hopper</td>
+<td>wgmma.mma_async</td>
+<td>1 个 warpgroup（128 线程）</td>
+<td>异步</td>
+<td>寄存器</td>
+</tr>
+<tr>
+<td>Blackwell</td>
+<td>tcgen05.mma</td>
+<td>1 个线程</td>
+<td>异步</td>
+<td>TMEM</td>
+</tr>
+</tbody>
+</table>
+<p>趋势：指令越来越大、越来越异步、越来越不占寄存器。</p>
+</details>
+<h2 id="hopper-blackwell">Hopper / Blackwell</h2>
+<h3 id="c37-cpasyncldgsts-as-a">C37 · <code>cp.async</code>（LDGSTS）和普通的 <code>As[...] = A[...]</code> 有什么区别？</h3>
+<p>来源：<a href="lessons/16-async-copy-pipeline.html">第 16 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>普通写法是 LDG（显存 → 寄存器）+ STS（寄存器 → shared），线程会卡住等数据、还占寄存器。<code>cp.async</code>（Ampere 起）一条指令直接显存 → shared、不经寄存器、发出就走；用 <code>commit_group</code> / <code>wait_group</code>（或 barrier / pipeline）等完成。</p>
+<p>每个线程默认只等自己发的拷贝，所以等完之后还要 <code>__syncthreads()</code>，别人搬的数据才可见。</p>
+</details>
+<h3 id="c38-s">C38 · 双缓冲 / S 级流水线怎么排？总时间大约多少？</h3>
+<p>来源：<a href="lessons/16-async-copy-pipeline.html">第 16 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>开 S 份 shared buffer，始终有 S − 1 块在路上：发出第 k+1 块的拷贝 → 等第 k 块到齐 → 用第 k 块计算 → 同步后 buffer 才能被覆盖。</p>
+<p>n 块、每块搬 t_l、算 t_c：同步写法 n(t_l + t_c)；流水线 ≈ n·max(t_l, t_c) + min(t_l, t_c)。流水线只能把快的那一步藏起来，慢的那一步决定总时间；shared 用量 × S。</p>
+</details>
+<h3 id="c39-hopper-tma-cpasync">C39 · Hopper 的 TMA 是什么？比 <code>cp.async</code> 好在哪？有什么限制？</h3>
+<p>来源：<a href="lessons/17-hopper-tma-mbarrier.html">第 17 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>SM 里专门的搬运单元。host 用 <code>cuTensorMapEncodeTiled</code> 建 tensor map（维数、步长、tile 大小、swizzle、越界填充），kernel 里<strong>一个线程一条指令</strong>搬整块 tile，硬件负责地址计算和越界（自动补 0）；可以 shared → global 写回、写回时归约、multicast 到 cluster 里多个 block。</p>
+<p>限制：除最内层外，全局张量每个 stride 必须是 16 字节的倍数。</p>
+</details>
+<h3 id="c40-mbarrier-tma">C40 · mbarrier 怎么判断 TMA 搬的数据到齐了？</h3>
+<p>来源：<a href="lessons/17-hopper-tma-mbarrier.html">第 17 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>mbarrier 同时记"还要几次 arrive"和"还要多少字节"。流程：<code>mbarrier.init(mbar, 1)</code> → 线程 0 <code>arrive.expect_tx(mbar, 字节数)</code> → 发 TMA（完成时自动扣字节）→ 所有线程 <code>try_wait.parity(mbar, phase)</code>。两个计数都清零时相位位翻转，等待的线程醒来，数据对它们可见；之后可以下一圈复用。</p>
+</details>
+<h3 id="c41-thread-block-cluster-shared-memorydsmem-block">C41 · thread block cluster 和分布式 shared memory（DSMEM）让 block 之间能做什么？</h3>
+<p>来源：<a href="lessons/17-hopper-tma-mbarrier.html">第 17 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>Hopper 起可把相邻几个 block 组成 cluster（<code>__cluster_dims__</code>），保证同时调度到同一个 GPC。cluster 内可以 <code>cluster.sync()</code> 互相等，可以用 <code>cluster.map_shared_rank(ptr, rank)</code> 直接读写对方的 shared memory（DSMEM）。</p>
+<p>用途：TMA multicast（一次读、几个 block 同时收到）；跨 block 归约。退出前要再 <code>cluster.sync()</code>，保证没人还在读你的 shared。</p>
+</details>
+<h3 id="c42-hopper-wgmma-ampere-mmasync">C42 · Hopper 的 wgmma 和 Ampere 的 mma.sync 有哪四点不同？</h3>
+<p>来源：<a href="lessons/18-hopper-wgmma-warp-specialization.html">第 18 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ol>
+<li>合作单位：warpgroup（4 个连续 warp，128 线程）vs 1 个 warp；</li>
+<li>形状：m64nNk16（N 最大 256）vs m16n8k16；</li>
+<li>操作数：B 必须在 shared、A 在 shared 或寄存器，直接从 shared 读（不用 ldmatrix），shared 布局要符合 swizzle 规定；</li>
+<li>异步：<code>wgmma.fence</code> → <code>mma_async</code> → <code>commit_group</code> → <code>wait_group</code>。</li>
+</ol>
+</details>
+<h3 id="c43-warp-specialization-full-empty-barrier-arrive-wait">C43 · warp specialization 的结构？full / empty 两组 barrier 各谁 arrive、谁 wait？</h3>
+<p>来源：<a href="lessons/18-hopper-wgmma-warp-specialization.html">第 18 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>block 分成生产者 warpgroup（只发 TMA）和消费者 warpgroup（只做 wgmma），中间是 shared memory 环形缓冲区（QSIZE 个 slot）。</p>
+<ul>
+<li><code>full[i]</code>：TMA 搬完时 arrive，消费者 wait；</li>
+<li><code>empty[i]</code>：消费者算完时 arrive，生产者 wait（初始让生产者以为全空）。</li>
+</ul>
+<p>配合 <code>setmaxnreg</code> 寄存器再分配：生产者降到 24 个，消费者升到 240 个。Pranjal 的 H100 GEMM 靠这一结构从 423 涨到 631 TFLOP/s。</p>
+</details>
+<h3 id="c44-persistent-kernel">C44 · persistent kernel 是什么？它解决哪三个问题？</h3>
+<p>来源：<a href="lessons/18-hopper-wgmma-warp-specialization.html">第 18 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>只启动和 SM 数一样多的 block（H100 为 132），每个 block 循环处理多个输出 tile。</p>
+<p>① store 结果时生产者已在搬下一个 tile，藏住 store 延迟；② 没有最后一波不满的尾部效应；③ 能自己控制 tile 顺序（分组、Hilbert 曲线）提高 L2 命中率。</p>
+</details>
+<h3 id="c45-cute-layout-4214-31">C45 · CuTe 的 Layout 是什么？<code>(4,2):(1,4)</code> 把 (3,1) 映射到几？默认步长是什么？</h3>
+<p>来源：<a href="lessons/19-cute-layout.html">第 19 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>Layout = (Shape, Stride)，把坐标映射到一维位置：index = Σ 坐标 × 步长。<code>(4,2):(1,4)</code>：(3,1) → 3·1 + 1·4 = 7（4 × 2 列优先）；<code>(4,2):(2,1)</code> 是行优先。</p>
+<p>不写 Stride 时默认 LayoutLeft（广义列优先，和 C 数组习惯相反）。一维坐标按 colexicographical 顺序（最左维变化最快）对应多维坐标。Shape / Stride 可以嵌套。</p>
+</details>
+<h3 id="c46-cute-layout-atom">C46 · CuTe 的 layout 代数有哪几种运算？Atom 的作用？</h3>
+<p>来源：<a href="lessons/19-cute-layout.html">第 19 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>composition（函数复合：重排、reshape、swizzle）、logical_divide（分块：块内坐标 × 第几块）、logical_product（把一个布局复制铺满）、complement。Tensor = 指针 + Layout；<code>local_tile</code> 取 block 的 tile，<code>local_partition</code> 按线程布局切给每个线程。</p>
+<p>MMA_Atom / Copy_Atom 把一条硬件指令（mma.sync / wgmma / tcgen05、cp.async / ldmatrix / TMA）需要的线程–值布局包装起来，再用 TiledMMA / TiledCopy 铺满；换架构时主要换 Atom。</p>
+</details>
+<h3 id="c47-blackwell-tcgen05mma-hopper-wgmma">C47 · Blackwell 的 tcgen05.mma 和 Hopper 的 wgmma 有哪四点不同？</h3>
+<p>来源：<a href="lessons/20-blackwell-tcgen05.html">第 20 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ol>
+<li>支持 FP4 / FP6 等更低精度，内建块缩放；</li>
+<li>累加器放 Tensor Memory（TMEM），不占寄存器；</li>
+<li><strong>一个线程</strong>发起；</li>
+<li>2-SM MMA：cluster 里相邻两个 CTA 合作，M 最大到 256。</li>
+</ol>
+<p>wgmma 在 Blackwell 上已弃用，Hopper 的 kernel 不能直接跑。</p>
+</details>
+<h3 id="c48-tensor-memory">C48 · Tensor Memory 多大、怎么分配、怎么访问？</h3>
+<p>来源：<a href="lessons/20-blackwell-tcgen05.html">第 20 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>每个 CTA 128 行（lane）× 512 列，每格 32 位 = 256 KB / SM。由一个 warp 用 <code>tcgen05.alloc</code> 按<strong>列</strong>分配（至少 32 列、2 的幂，一列包含全部 128 行），kernel 结束前必须 <code>tcgen05.dealloc</code>。</p>
+<p>只能通过 MMA 写入、<code>tcgen05.ld</code> 读到寄存器、<code>tcgen05.cp</code> / <code>tcgen05.st</code> 写入；每个 warp 只能访问 32 个 lane。</p>
+</details>
+<h3 id="c49-mxfp8mxfp4nvfp4">C49 · MXFP8、MXFP4、NVFP4 三种块缩放格式各是多少元素一块、缩放因子是什么类型？</h3>
+<p>来源：<a href="lessons/20-blackwell-tcgen05.html">第 20 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<table>
+<thead>
+<tr>
+<th>格式</th>
+<th>元素</th>
+<th>每块</th>
+<th>缩放因子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MXFP8</td>
+<td>E4M3 / E5M2</td>
+<td>32</td>
+<td>UE8M0（只能是 2 的幂）</td>
+</tr>
+<tr>
+<td>MXFP4</td>
+<td>E2M1</td>
+<td>32</td>
+<td>UE8M0</td>
+</tr>
+<tr>
+<td>NVFP4</td>
+<td>E2M1</td>
+<td>16</td>
+<td>UE4M3（FP8）</td>
+</tr>
+</tbody>
+</table>
+<p>缩放在 Tensor Core 里硬件完成：D = (A × scale_A)(B × scale_B) + C。NVFP4 平均每元素 4.5 位，比 MXFP4 的 4.25 位多一点，换更好的精度。</p>
+</details>
+<h2 id="llm-kernel">融合与 LLM kernel</h2>
+<h3 id="c50-online-softmax-m-l">C50 · online softmax 的更新式是什么？两块的 (m, ℓ) 怎么合并？</h3>
+<p>来源：<a href="lessons/21-online-softmax-fusion.html">第 21 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>逐个读 x：m′ = max(m, x)，ℓ ← ℓ·e^(m − m′) + e^(x − m′)，m ← m′。旧账按新的最大值打折。</p>
+<p>合并：m = max(m₁, m₂)，ℓ = ℓ₁e^(m₁ − m) + ℓ₂e^(m₂ − m)。满足结合律，所以能分块、能并行。softmax 从读三遍变成读两遍。例：[1, 3, 2] 得 ℓ = 1.5032。</p>
+</details>
+<h3 id="c51-ai">C51 · 算子融合省的是什么？AI 里最有价值的几类融合？</h3>
+<p>来源：<a href="lessons/21-online-softmax-fusion.html">第 21 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>把相连的运算写进同一个 kernel，中间结果留在寄存器 / shared，不写回显存（再读回来）；memory-bound 时耗时 ∝ 总访存字节，两个合一个约快一倍，还省一次启动。</p>
+<p>最有价值：残差加 + RMSNorm / LayerNorm；GEMM + bias + 激活（epilogue）；attention（QKᵀ → softmax → PV）；最后一层 Linear + 交叉熵；量化 + GEMM。</p>
+</details>
+<h3 id="c52-flashattention">C52 · FlashAttention 的核心做法是什么？为什么结果是精确的？</h3>
+<p>来源：<a href="lessons/22-flashattention.html">第 22 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>Q 分块，每个 Q 块依次和每个 K、V 块在片上算 S = QKᵀ，用 online softmax 维护 (m, ℓ)，输出 O 每步先乘 e^(m − m′) 打折再累加 P̃V，最后除一次 ℓ。从不把 N × N 的 S、P 写回显存，显存占用 O(N)。</p>
+<p>精确：online softmax 的打折修正在数学上等价于整行 softmax。反向不存 P，用 Q、K、V 和保存的 LSE = m + log ℓ 重新算。</p>
+</details>
+<h3 id="c53-fa2fa3fa4">C53 · FA2、FA3、FA4 各针对什么瓶颈、用了什么手段？</h3>
+<p>来源：<a href="lessons/22-flashattention.html">第 22 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ul>
+<li>FA2（A100）：非矩阵乘 FLOP 贵 16 倍 → 循环里不除 ℓ；SM 吃不满 → 在 Q 维度也并行；按 Q 分 warp 免去 warp 间通信。</li>
+<li>FA3（H100）：FA2 只有 35% 利用率 → TMA + wgmma + warp specialization、乒乓调度、GEMM 与 softmax 重叠、FP8。FP16 740 TFLOP/s（75%）。</li>
+<li>FA4（B200）：Tensor Core 翻倍但 exp 单元和 shared 带宽没涨，tile 128 时 exp 与 MMA 都要 1024 周期 → 多项式模拟 exp、条件 rescale、TMEM、2-CTA。最高 1613 TFLOP/s（71%），用 CuTe DSL 写。</li>
+</ul>
+</details>
+<h3 id="c54-llm-decode-memory-bound-token">C54 · 为什么 LLM decode 是 memory-bound？每个 token 的时间下限怎么估？</h3>
+<p>来源：<a href="lessons/23-inference-kernels.html">第 23 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>decode 每步每条序列只处理 1 个 token，矩阵乘退化成矩阵乘向量，算术强度 ≈ batch 大小（BF16 权重时），远低于脊点 295。</p>
+<p>每个 token 至少要把全部权重读一遍：下限 = 权重字节 ÷ 显存带宽。Llama-3-8B BF16 约 16 GB ÷ 3.35 TB/s ≈ 4.8 ms，batch 1 上限约 210 token/s。对策：量化权重 / KV、加大 batch、融合。</p>
+</details>
+<h3 id="c55-paged-kv-cache-split-kv">C55 · paged KV cache 和 split-KV 各解决什么问题？</h3>
+<p>来源：<a href="lessons/23-inference-kernels.html">第 23 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>paged KV cache（vLLM）：KV cache 切成固定大小的页，每条序列一张页表记录物理位置，序列变长再分页——解决预留连续空间造成的碎片和浪费；kernel 要先查页表再读。</p>
+<p>split-KV：batch 小、序列长时并行度不够，把一条序列的 K、V 切成几段分给几个 SM 各算局部结果和 (m, ℓ)，再用 online softmax 的合并式合起来。</p>
+</details>
+<h2 id="_5">工具与生产</h2>
+<h3 id="c56-cuda-tile-simt">C56 · CUDA 的 Tile 编程模型和 SIMT 有什么不同？</h3>
+<p>来源：<a href="lessons/24-tile-dsl.html">第 24 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>SIMT 按单个线程写；Tile 按整个 block 写，描述对 tile（多维数据块）的运算，block 里有几个线程、怎么映射、用不用 shared / 异步 / Tensor Core 都由编译器决定。</p>
+<p>规定：block 只有一条控制流（没有 warp 分岔的概念）；tile 不可变，每维是 2 的幂、编译期已知；用 tile space 坐标 load / store，越界自动处理。前端：cuTile Python、CUDA Tile C++、cutile-rs。</p>
+</details>
+<h3 id="c57-2026-kernel">C57 · 2026 年写 kernel 的工具从低到高怎么分层？怎么选？</h3>
+<p>来源：<a href="lessons/24-tile-dsl.html">第 24 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>CUDA C++ / PTX → CuTe DSL、ThunderKittens → TileLang、cuTile → Triton → Helion。越往上写得越快、越可移植，能控制的越少。</p>
+<p>选型：先 Triton 写对；要跨 NVIDIA 架构可移植用 cuTile；要多后端（含国产卡）用 TileLang；要在 Hopper / Blackwell 接近峰值、控制 TMA / TMEM / warp 分工用 CuTe DSL 或 CUTLASS；学原理和调试用 C++ / PTX。</p>
+</details>
+<h3 id="c58-ptx-sass-cubin-ptx">C58 · PTX 和 SASS 有什么区别？cubin 和 PTX 的兼容规则？</h3>
+<p>来源：<a href="lessons/25-compile-deploy.html">第 25 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>PTX 是虚拟指令集（<code>compute_XY</code>），SASS 是某一代 GPU 的真实机器码（<code>sm_XY</code>，装在 cubin 里）。fatbin 可同时装多份 cubin 和 PTX，驱动运行时挑最合适的。</p>
+<p>cubin：只能在同一大版本、小版本 ≥ 目标的 GPU 上跑（8.6 能上 8.9，不能上 8.0 或 9.0）。PTX：能被驱动 JIT 到任何更高计算能力的 GPU。带 <code>a</code> 后缀（sm_90a、sm_100a）的专属指令不向前兼容。</p>
+</details>
+<h3 id="c59-nvrtc-rust-c-kernel">C59 · NVRTC 有什么用？Rust 程序调用 C++ kernel 有哪两种方式？</h3>
+<p>来源：<a href="lessons/25-compile-deploy.html">第 25 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>NVRTC：运行时把 CUDA C++ 源码字符串编译成 PTX。用途：按运行时参数生成专门的 kernel（DeepGEMM）、宿主不是 C++ 时免去 nvcc 构建（CuPy RawKernel、cudarc）。</p>
+<p>Rust host + C++ kernel：① 构建时 nvcc 预编译成 PTX / cubin，cudarc 加载（启动快）；② 运行时 cudarc 调 NVRTC 编译（构建简单、可特化，首次启动慢）。生产默认是这种组合。</p>
+</details>
+<h3 id="c60-stream-stream">C60 · stream 是什么？拷贝和计算重叠需要哪两个前提？默认 stream 有什么坑？</h3>
+<p>来源：<a href="lessons/26-streams-graphs-pdl.html">第 26 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>stream 是按顺序执行的任务队列；同一 stream 内严格有序，不同 stream 之间可以并发；跨 stream 依赖用 event（<code>cudaEventRecord</code> + <code>cudaStreamWaitEvent</code>）。</p>
+<p>重叠前提：host 内存是锁页内存（<code>cudaMallocHost</code>），拷贝用 <code>cudaMemcpyAsync</code>。坑：legacy 默认 stream 会和其他所有 stream 同步，用了它并发就没了（用 <code>--default-stream per-thread</code> 或显式建 stream）。</p>
+</details>
+<h3 id="c61-cuda-graphs">C61 · CUDA Graphs 的三步是什么？省掉的是什么？有什么限制？</h3>
+<p>来源：<a href="lessons/26-streams-graphs-pdl.html">第 26 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>① 捕获（stream capture 或 Graph API 把一串操作录下来）→ ② 实例化（一次）→ ③ 重放（每次一个 <code>cudaGraphLaunch</code>）。省掉的是 <strong>CPU 侧</strong>每次启动 kernel 的开销，对几百个小 kernel 的 LLM decode 特别有效。</p>
+<p>限制：形状、指针基本固定；变化时用 Graph Update 或按形状（如每种 batch 大小）各录一张。</p>
+</details>
+<h3 id="c62-pdl">C62 · PDL 怎么用？省掉的是什么？</h3>
+<p>来源：<a href="lessons/26-streams-graphs-pdl.html">第 26 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>Programmatic Dependent Launch（CC ≥ 9.0）：前一个 kernel 调 <code>cudaTriggerProgrammaticLaunchCompletion()</code>（或所有 block 退出时隐式触发），后一个 kernel 以 PDL 属性启动，提前在空出的 SM 上做准备工作；用前者结果之前<strong>必须</strong> <code>cudaGridDependencySynchronize()</code>。</p>
+<p>省掉的是 <strong>GPU 侧</strong>相邻 kernel 之间的收尾 / 准备空隙。重叠是机会性的，要用 Nsight Systems 实测。</p>
+</details>
+<h3 id="c63-kernel">C63 · 优化一个 kernel 的五步流程？怎么证明"对"和"快"？</h3>
+<p>来源：<a href="lessons/27-methodology-wrap-up.html">第 27 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<p>① 先写对（参考实现对拍 + compute-sanitizer）→ ② 判断瓶颈（roofline 三分类）→ ③ 先 nsys 看全局、再 ncu 看单个 → ④ 一次只改一处、记录数字 → ⑤ 和 cuBLAS / FlashAttention / Quack 等基线比、报 SOL 百分比。官方叫 APOD（评估、并行化、优化、部署）循环。</p>
+<p>对：多 shape 多种子对拍、相对误差容差、memcheck / racecheck / synccheck。快：event 计时、预热、中位数、清 L2、注意降频。</p>
+</details>
+<h3 id="c64-ai-kernel">C64 · 三类瓶颈各先试哪些手段？用 AI 写 kernel 要做哪四项检查？</h3>
+<p>来源：<a href="lessons/27-methodology-wrap-up.html">第 27 章</a> · 加入 2026-11-14 · 复习记录：</p>
+<details>
+<summary>答案</summary>
+<ul>
+<li>memory-bound：合并 + 向量化、融合、分层归约、异步拷贝 / TMA、低精度存储；</li>
+<li>compute-bound：shared → 寄存器 → warp 分块、Tensor Core、流水线 + warp specialization、swizzle、persistent、低精度计算；</li>
+<li>overhead-bound：CUDA Graphs、PDL、融合 / megakernel、streams。</li>
+</ul>
+<p>AI 写的 kernel：① 隐藏测试（没见过的 shape 和种子）；② 检查代码里有没有偷调 torch、特判、把计算挪到 host；③ 基线公平（PyTorch 开 TF32 / BF16，比 cuBLAS）；④ 按规范计时。KernelBench-Verified 发现换严格评测后最好模型的加速比从 1.43 掉到 0.88。</p>
+</details>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>

@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 26 章 · 延迟优化：streams、CUDA Graphs 与 PDL · CUDA 从线程到 Tensor Core</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1f2328;--mute:#5d6470;--line:#e3e5e8;--card:#fff;--acc:#2f6fdf;--code:#f2f3f5;--quote:#f4f6fa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}}
+:root[data-theme="dark"]{--bg:#15181d;--fg:#e4e7ec;--mute:#9aa3b2;--line:#2c323b;--card:#1c2026;--acc:#7aa7ff;--code:#22272f;--quote:#1b2029}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px}
+header.top .brand{font-weight:600;color:var(--fg);text-decoration:none;margin-right:auto}
+header.top a{text-decoration:none}
+main{max-width:860px;margin:0 auto;padding:24px 16px 72px;overflow-wrap:anywhere}
+h1{font-size:28px;line-height:1.35;margin:8px 0 16px} h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)} h3{font-size:18px;margin:28px 0 8px}
+img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#fff}
+blockquote{margin:16px 0;padding:10px 16px;background:var(--quote);border-left:3px solid var(--acc);border-radius:4px;color:var(--mute)}
+blockquote p{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.9em}
+pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto} pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%;margin:12px 0;font-size:15px}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top} th{background:var(--code)}
+details{border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--card)}
+details[open]{padding-bottom:10px} summary{cursor:pointer;color:var(--acc);font-weight:500}
+mjx-container{overflow-x:auto;overflow-y:hidden;max-width:100%}
+.btn{display:inline-block;margin:4px 8px 4px 0;padding:6px 14px;border:1px solid var(--acc);border-radius:999px;text-decoration:none;font-size:14px}
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin:16px 0}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--acc)} .card img{border:0;border-bottom:1px solid var(--line);border-radius:0;aspect-ratio:16/10;object-fit:contain;width:100%}
+.card .no{color:var(--mute);font-size:13px;padding:8px 12px 0} .card .t{padding:0 12px 12px;font-weight:500;line-height:1.5}
+.lead{font-size:17px;color:var(--mute)}
+footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-size:13px}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],processEscapes:true,processEnvironments:true}};</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+</head><body>
+<header class="top"><div class="in">
+<a class="brand" href="../index.html">CUDA 从线程到 Tensor Core</a>
+<a href="../lessons/index.html">讲义目录</a>
+<a href="../animations/index.html">动画</a>
+<a href="../review.html">复习卡片</a>
+<a href="../lessons/appendix-glossary.html">缩写表</a>
+</div></header>
+<main>
+<h1 id="26-streamscuda-graphs-pdl">第 26 章 · 延迟优化：streams、CUDA Graphs 与 PDL</h1><p><a class="btn" href="../animations/26-launch-timeline.html">▶ 打开本章可交互动画</a></p>
+<blockquote>
+<p>本章回答：一个 kernel 只要 5 微秒，启动它却要好几微秒，怎么办？stream 是什么，怎么让拷贝和计算、两个独立的 kernel 同时进行？CUDA Graphs 怎么把几百次启动压成一次？Hopper 的 PDL 怎么让后一个 kernel 在前一个还没结束时就开始准备？<br />
+讲解日期：2026-11-14 · 上一章：<a href="../lessons/25-compile-deploy.html">第 25 章 编译与部署</a> · 下一章：<a href="../lessons/27-methodology-wrap-up.html">第 27 章 实战方法论与全书收尾</a><br />
+对应原文：PG §2.5 Asynchronous Execution（<code>materials/text/cuda-programming-guide.txt</code>：streams 第 6309 行、events 第 6430 行、默认 stream 第 6829 行、Graphs 入门第 6957 行）、§4.2 CUDA Graphs（第 12118–12800 行）、§4.5 Programmatic Dependent Launch（第 15683–15800 行）、§3.1.4（第 8251 行）；Best Practices §10.1.2、§11.5（<code>text/cuda-c-best-practices-guide.txt</code> 第 1134–1255、2475–2553 行）；Oxford lec6（<code>text/oxford-lec6_wes.txt</code>，streams 与多 GPU）；04 调研 §1.1、§5.3</p>
+<p>本章缩写：PDL = Programmatic Dependent Launch（程序化 / 依赖 / 启动）· DAG = Directed Acyclic Graph（有向无环图）· H2D / D2H = 主机到设备 / 设备到主机拷贝</p>
+</blockquote>
+<h2 id="_1">讲解</h2>
+<h3 id="overhead-boundgpu-cpu2026-11-14">第一步：overhead-bound——GPU 在等 CPU（2026-11-14）</h3>
+<p>第 9 章的第三类"慢"：kernel 本身很短，时间花在启动和间隙上。</p>
+<p><strong>数字演示</strong>（量级〔旧知〕）：一次 kernel 启动在 CPU 侧要几微秒；LLM decode 一个 token 有几百个 kernel，每个只跑几到几十微秒。假设 300 个 kernel、平均每个 8 微秒、每次启动间隙 4 微秒：</p>
+<div class="arithmatex">\[\text{总时间} \approx 300 \times (8 + 4) = 3.6 \text{ ms}, \quad \text{其中间隙} = 1.2 \text{ ms（33\%）}\]</div>
+<p>在 Nsight Systems 的时间线上（第 9 章），这表现为 GPU 那一行上<strong>一段段的空白</strong>。本章的三个工具都是为了消灭这些空白。</p>
+<h3 id="stream2026-11-14">第二步：stream——一条有序的任务队列（2026-11-14）</h3>
+<p>PG §2.5.2：<strong>stream 是一个按顺序执行的任务队列</strong>（kernel、拷贝、event）。同一个 stream 里的任务严格按提交顺序执行；<strong>不同 stream 之间的任务可以并发</strong>。</p>
+<pre><code class="language-cpp">cudaStream_t s1, s2;
+cudaStreamCreate(&amp;s1); cudaStreamCreate(&amp;s2);
+
+cudaMemcpyAsync(dA, hA, bytes, cudaMemcpyHostToDevice, s1);   // 拷贝走 s1
+kernelX&lt;&lt;&lt;g, b, 0, s1&gt;&gt;&gt;(dA);                                 // 第四个参数是 stream
+kernelY&lt;&lt;&lt;g, b, 0, s2&gt;&gt;&gt;(dB);                                 // 和 s1 里的东西可以同时跑
+cudaStreamSynchronize(s1);
+</code></pre>
+<p>两个经典用法：</p>
+<ol>
+<li><strong>拷贝与计算重叠</strong>（Best Practices §10.1.2）：把数据切成几段，第 k 段在算的时候第 k+1 段在拷。要求 host 内存是<strong>锁页内存</strong>（<code>cudaMallocHost</code>，第 4 章），而且用 <code>cudaMemcpyAsync</code>。GPU 有独立的拷贝引擎，拷贝和 kernel 真能同时进行。</li>
+<li><strong>独立的小 kernel 并发</strong>（Best Practices §11.5）：两个都填不满 GPU 的 kernel，放进不同 stream 可以一起跑。</li>
+</ol>
+<p>stream 之间要有依赖时，用 <strong>event</strong>：<code>cudaEventRecord(e, s1); cudaStreamWaitEvent(s2, e);</code>——s2 后面的任务要等 s1 走到 e 这一步。</p>
+<p>一个坑（PG §2.5.6）：<strong>默认 stream（legacy default stream）会和其他所有 stream 同步</strong>，不小心用了它，并发就没了。编译时加 <code>--default-stream per-thread</code> 或者显式创建 stream。</p>
+<h3 id="cuda-graphs2026-11-14">第三步：CUDA Graphs——录一次，重放多次（2026-11-14）</h3>
+<p>PG §2.5.9.2：很多程序会<strong>反复执行同一串操作</strong>（比如每生成一个 token 都跑一遍同样的几百个 kernel）。CUDA Graphs 把这串操作做成一张图：</p>
+<ol>
+<li><strong>捕获（capture）</strong>：第一次执行时，用 stream capture 把提交到 stream 的操作录下来（也可以用 Graph API 手工搭）；</li>
+<li><strong>实例化（instantiate）</strong>：做一次，把运行时需要的结构全部准备好；</li>
+<li><strong>执行（launch）</strong>：之后每次只要一次 <code>cudaGraphLaunch</code>，整张图的几百个 kernel 一起提交，<strong>CPU 开销几乎为零</strong>。</li>
+</ol>
+<pre><code class="language-cpp">cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal);
+for (int l = 0; l &lt; 32; l++) { attn&lt;&lt;&lt;..., s&gt;&gt;&gt;(...); mlp&lt;&lt;&lt;..., s&gt;&gt;&gt;(...); }
+cudaStreamEndCapture(s, &amp;graph);
+cudaGraphInstantiate(&amp;exec, graph, 0);
+for (int t = 0; t &lt; n_tokens; t++) cudaGraphLaunch(exec, s);   // 每个 token 一次提交
+</code></pre>
+<p>限制：图是"录下来"的，<strong>形状、指针在重放时不能随意变</strong>（可以用 Graph Update 改参数，PG §4.2.3；变化太多就要多录几张，比如每种 batch 大小一张）。PyTorch 的 <code>torch.cuda.CUDAGraph</code> 和 <code>torch.compile(mode="reduce-overhead")</code> 就是这个；vLLM / SGLang 的 decode 默认用 CUDA Graphs。</p>
+<p>第一步例子里那 1.2 ms 的启动间隙，用 Graph 后基本消失。</p>
+<h3 id="pdl2026-11-14">第四步：PDL——前一个还没完，后一个先热身（2026-11-14）</h3>
+<p>Graph 去掉了 CPU 侧的启动开销，但 <strong>GPU 侧</strong>还有一个空隙：前一个 kernel 的最后几个 block 在收尾时，大部分 SM 已经闲了；后一个 kernel 要等前一个<strong>全部结束</strong>才能开始，开始后还要做一段准备工作（PG §4.5.1 说的 "preamble"：清零 buffer、读常量、算地址、初始化 barrier……）。</p>
+<p>Hopper（CC 9.0）的 <strong>PDL</strong>（PG §4.5）：</p>
+<ul>
+<li>前一个 kernel（primary）在<strong>不再产生后续需要的数据</strong>时调用 <code>cudaTriggerProgrammaticLaunchCompletion()</code>，发信号"后面的可以开始了"；不调的话，等所有 block 退出时隐式触发；</li>
+<li>后一个 kernel（secondary）以 PDL 属性启动，可以<strong>提前在空出来的 SM 上开始</strong>，先做不依赖前者结果的准备工作；</li>
+<li>用到前者结果之前，<strong>必须</strong>调用 <code>cudaGridDependencySynchronize()</code> 等前者的数据就绪——PG 原话：依赖并发执行而不这样同步是不安全的，可能死锁。</li>
+</ul>
+<pre><code class="language-cpp">__global__ void secondary(...) {
+    // 准备工作：不依赖 primary 的结果
+    init_shared_memory(); compute_addresses();
+    cudaGridDependencySynchronize();       // 等 primary 的结果可见
+    // 正式计算
+}
+// 启动：cudaLaunchKernelEx + cudaLaunchAttributeProgrammaticStreamSerialization
+</code></pre>
+<p>PDL 可以和 CUDA Graphs 一起用（PG §4.5.3：stream capture 或 <code>cudaGraphDependencyTypeProgrammatic</code> 边）。PG 也提醒：<strong>重叠是"机会性的"，不保证一定发生</strong>——要用 Nsight Systems 实测（04 调研 §1.1）。CUTLASS 的 Hopper / Blackwell kernel 已经内置了 PDL 支持。</p>
+<h3 id="2026-11-14">第五步：三件工具的分工（2026-11-14）</h3>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>消掉的是什么</th>
+<th>前提 / 代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>streams + 异步拷贝</td>
+<td>拷贝和计算之间、独立 kernel 之间的串行等待</td>
+<td>锁页内存；任务之间真的独立</td>
+</tr>
+<tr>
+<td>CUDA Graphs</td>
+<td><strong>CPU 侧</strong>每次启动的开销</td>
+<td>同一串操作重复执行；形状固定或按形状分别录</td>
+</tr>
+<tr>
+<td>PDL</td>
+<td><strong>GPU 侧</strong>相邻 kernel 之间的收尾 / 准备空隙</td>
+<td>CC ≥ 9.0；后一个 kernel 有可以提前做的准备工作</td>
+</tr>
+<tr>
+<td>融合 / megakernel（第 21、23 章）</td>
+<td>kernel 边界本身</td>
+<td>开发成本高</td>
+</tr>
+</tbody>
+</table>
+<h3 id="kernel">动画演示：同一串 kernel 的四种时间线</h3>
+<p><img alt="streams graphs pdl" src="../animations/26-launch-timeline.gif" /></p>
+<p>可交互版：<a href="../animations/26-launch-timeline.html">animations/26-launch-timeline.html</a>。开关：<strong>普通启动 / CUDA Graph / Graph + PDL / 两个 stream</strong>。</p>
+<p><strong>怎么看</strong>：</p>
+<ol>
+<li>上面一行是 CPU（每次启动是一小段），下面是 GPU（每个 kernel 一个色块，色块里浅色部分是准备工作）；</li>
+<li>普通启动：GPU 色块之间有空白；</li>
+<li>Graph：CPU 只提交一次，GPU 上的空白变窄；</li>
+<li>Graph + PDL：后一个 kernel 的浅色准备段和前一个的尾巴重叠；</li>
+<li>两个 stream：两串互不依赖的 kernel 并排跑。底部显示总时间。</li>
+</ol>
+<h2 id="_2">练习与作答记录</h2>
+<p><strong>题 1</strong>：把 400 MB 数据拷到 GPU、算一个 kernel、再拷回。拷贝每方向 12 GB/s 有效带宽、kernel 需要 20 ms。不切分时总时间多少？切成 4 段、用两个 stream 让拷贝和计算重叠，大约能降到多少？（假设上下行拷贝也能同时进行）</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 2</strong>：为什么 CUDA Graphs 对 LLM 的 decode 特别有效，对 prefill 帮助不大？如果服务里 batch 大小一直在变，用 Graph 时要怎么处理？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<p><strong>题 3</strong>：PDL 里后一个 kernel 如果忘了调用 <code>cudaGridDependencySynchronize()</code> 就去读前一个 kernel 的输出，会发生什么？为什么在测试时可能"看起来没问题"？</p>
+<p><strong>作答</strong>：（待作答）</p>
+<h2 id="_3">口诀</h2>
+<blockquote>
+<p>小 kernel 一多，时间花在等：CPU 在下单，GPU 在空转；<br />
+stream 是有序队列，队列之间可并行：拷这段、算那段，要锁页、要 Async，躲开默认 stream；<br />
+Graph 录一次放千次，CPU 下单只一次；形状变了要多录；<br />
+PDL 让后一个先热身，用前一个的结果前必须同步；重叠不保证，要实测。</p>
+</blockquote>
+<h2 id="_4">本章复习卡片</h2>
+<ul>
+<li>C60（stream 的语义；拷贝计算重叠的两个前提：锁页内存 + Async；默认 stream 的同步坑）</li>
+<li>C61（CUDA Graphs 三步：捕获 / 实例化 / 重放；省掉的是 CPU 启动开销；形状固定的限制）</li>
+<li>C62（PDL：trigger + <code>cudaGridDependencySynchronize()</code>；CC ≥ 9.0；省 GPU 侧收尾 / 准备空隙）</li>
+</ul>
+<h2 id="_5">附录 · 延伸阅读</h2>
+<blockquote>
+<p>留给以后深入学习用，不影响本章主线。★ 是建议先读的。</p>
+</blockquote>
+<h3 id="_6">推荐阅读</h3>
+<table>
+<thead>
+<tr>
+<th>读什么</th>
+<th>读哪里</th>
+<th>读它为了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>★ PG §2.5</td>
+<td><code>text/cuda-programming-guide.txt</code> 第 6309–6990 行</td>
+<td>streams、events（含计时）、默认 stream、显式 / 隐式同步、Graph 入门</td>
+</tr>
+<tr>
+<td>★ PG §4.5 PDL</td>
+<td>第 15683–15800 行</td>
+<td>背景图 42–44、API、在 Graph 里使用</td>
+</tr>
+<tr>
+<td>PG §4.2 CUDA Graphs</td>
+<td>第 12118–12800 行</td>
+<td>节点类型、stream capture 规则、实例化、更新、条件节点</td>
+</tr>
+<tr>
+<td>Best Practices §10.1.2、§11.5</td>
+<td><code>text/cuda-c-best-practices-guide.txt</code> 第 1134–1255、2475–2553 行</td>
+<td>拷贝计算重叠的分段写法、并发 kernel</td>
+</tr>
+<tr>
+<td>Oxford lec6 + prac10–12</td>
+<td><code>text/oxford-lec6_wes.txt</code>、<code>courses/oxford-cuda-giles/prac10–12/</code></td>
+<td>streams 与多 GPU 的课堂讲法和练习（study-plan 阶段 12）</td>
+</tr>
+<tr>
+<td>OLCF CUDA Training Series 的 CUDA Graphs 一讲</td>
+<td>在线（2021-10）</td>
+<td>官方培训录像（04 调研 §1.5）</td>
+</tr>
+<tr>
+<td>CUTLASS「Dependent kernel launches」文档</td>
+<td>在线 docs.nvidia.com/cutlass</td>
+<td>CUTLASS 里怎么开 PDL</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">数学原理</h3>
+<ul>
+<li><strong>启动开销占比</strong>：<span class="arithmatex">\(n\)</span> 个 kernel、平均运行 <span class="arithmatex">\(t_k\)</span>、间隙 <span class="arithmatex">\(t_g\)</span>，间隙占比 <span class="arithmatex">\(= t_g / (t_k + t_g)\)</span>；<span class="arithmatex">\(t_k\)</span> 越小占比越大。</li>
+<li><strong>分段重叠</strong>：数据切 <span class="arithmatex">\(s\)</span> 段、拷贝总时间 <span class="arithmatex">\(T_c\)</span>、计算总时间 <span class="arithmatex">\(T_k\)</span>，理想流水后 <span class="arithmatex">\(\approx \max(T_c, T_k) + \min(T_c, T_k)/s\)</span>（和第 16 章的流水线公式同一结构）。</li>
+</ul>
+<h3 id="_8">公式 / 代码清单</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>建 stream / 指定 stream</td>
+<td><code>cudaStreamCreate(&amp;s)</code>；<code>k&lt;&lt;&lt;g, b, smem, s&gt;&gt;&gt;(...)</code>；<code>cudaMemcpyAsync(..., s)</code></td>
+</tr>
+<tr>
+<td>跨 stream 依赖</td>
+<td><code>cudaEventRecord(e, s1); cudaStreamWaitEvent(s2, e);</code></td>
+</tr>
+<tr>
+<td>每线程默认 stream</td>
+<td><code>nvcc --default-stream per-thread</code></td>
+</tr>
+<tr>
+<td>Graph 捕获</td>
+<td><code>cudaStreamBeginCapture</code> → 提交任务 → <code>cudaStreamEndCapture</code> → <code>cudaGraphInstantiate</code> → <code>cudaGraphLaunch</code></td>
+</tr>
+<tr>
+<td>PDL</td>
+<td>primary：<code>cudaTriggerProgrammaticLaunchCompletion()</code>；secondary：<code>cudaGridDependencySynchronize()</code>；启动属性 <code>cudaLaunchAttributeProgrammaticStreamSerialization</code></td>
+</tr>
+<tr>
+<td>PyTorch</td>
+<td><code>torch.cuda.CUDAGraph()</code>、<code>torch.compile(mode="reduce-overhead")</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
+<blockquote>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch26_streams_graphs.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch26_streams_graphs.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真机要 NVIDIA GPU [GPU]；这里用一个小时间线模拟 stream / 引擎的规则）：</p>
+<p><code>bash  
+cd cuda-programming/solutions/chapter-code  
+uv run python ch26_streams_graphs.py   # 一步一步打印  
+uv run pytest tests/test_ch24_27.py</code></p>
+</blockquote>
+<p><strong>讲义 ↔ 代码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>讲义</th>
+<th>公式 / 说法</th>
+<th>写法</th>
+<th>跑出来</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第一步 启动间隙</td>
+<td>300 × (8 + 4) µs</td>
+<td><code>overhead(300, 8, 4)</code></td>
+<td>3.6 ms，间隙 1.2 ms（33%）</td>
+</tr>
+<tr>
+<td>第二步 不同 stream 并发</td>
+<td>同 stream 有序、不同 stream 可并发</td>
+<td><code>schedule([...])</code></td>
+<td>Y(s2) 0 → 2，和 H2D(s1) 同时进行</td>
+</tr>
+<tr>
+<td>第二步 拷贝与计算重叠</td>
+<td>切成 2 段、两个 stream</td>
+<td><code>schedule([...])</code>（编的耗时）</td>
+<td>8 → 6</td>
+</tr>
+<tr>
+<td>第三、四步 Graph / PDL</td>
+<td>省 CPU 下单 / 省准备空隙</td>
+<td><code>launch_timeline(100, 8, 4, 2, mode)</code>（编的耗时）</td>
+<td>1400 → 1004 → 806 µs</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键几行</strong>：</p>
+<pre><code class="language-python">start = stream_free.get(stream, 0.0)          # 同一 stream：等前一个任务做完
+for a, b in sorted(busy.get(engine, [])):     # 同一引擎：找最早放得下的空闲
+    if start + dur &lt;= a:
+        break
+    start = max(start, b)
+busy.setdefault(engine, []).append((start, start + dur))
+</code></pre>
+<p><strong>代码里才看得到的 3 件事</strong>：</p>
+<ol>
+<li><strong>两个引擎：copy 和 compute</strong>：GPU 有独立的拷贝引擎，所以拷贝和 kernel 真能同时进行；模型里同一引擎一次只做一件事，不同引擎互不影响。</li>
+<li><strong><code>launch_timeline</code> 的 PDL 是理想情况</strong>：假设后一个 kernel 的准备工作完全藏进前一个的计算；PG 说重叠是"机会性的"，要用 Nsight Systems 实测。</li>
+<li><strong>第三、四步的 µs 数是编的</strong>：只为看三种方式谁快，讲义里只有第一步那组数是讲义给的。</li>
+</ol>
+<p><strong>自己改一改</strong>（不影响练习答案）：</p>
+<ul>
+<li>在 <code>schedule</code> 里把数据切成 3 段、用三个 stream，看总时间。</li>
+<li>把 <code>launch_timeline</code> 的 CPU 下单时间改成 20 µs（Python 框架常见的量级），看 Graph 省了多少。</li>
+</ul><nav class="pager"><a href="25-compile-deploy.html">← 第 25 章 · 编译与部署：PTX、cubin、fatbin、JIT，以及 Rust host + C++ kernel</a><a href="27-methodology-wrap-up.html">第 27 章 · 实战方法论与全书收尾：拿到一个慢 kernel，按什么顺序下手 →</a></nav>
+</main>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+</body></html>
