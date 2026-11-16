@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>streams、Graph 与 PDL</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 26 章 · 同一串 kernel 的四种时间线</h1>
+<p class="sub">配套讲义：<a href="../lessons/26-streams-graphs-pdl.html">第 26 章 · 延迟优化：streams、CUDA Graphs 与 PDL</a>。上面一行是 CPU（每次启动一小段），下面是 GPU（每个 kernel 一个色块，浅色部分是准备工作）。6 个 kernel，每个 5 个单位，其中 1 个单位是准备。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 300"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>方式：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">总时间</div><div class="v" id="stt"></div></div><div class="stat"><div class="l">GPU 空闲</div><div class="v" id="sg"></div></div><div class="stat"><div class="l">CPU 提交次数</div><div class="v" id="sc"></div></div></div>
+<p class="note">看点：① 普通启动：GPU 色块之间有空白（CPU 下单跟不上）；② Graph：只提交一次，空白变窄；③ Graph + PDL：后一个 kernel 的准备段和前一个的尾巴重叠；④ 两个 stream：两串互不依赖的 kernel 并排跑。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+let M=0,k=0;const N=6,KT=5,PRE=1,LAUNCH=2.5;const MODES=['普通启动','CUDA Graph','Graph + PDL','两个 stream'];
+function plan(){const cpu=[],gpu=[];
+ if(M===0){let t=0,g=0;for(let i=0;i<N;i++){cpu.push({s:t,e:t+LAUNCH});t+=LAUNCH;const s=Math.max(t,g+0.5);gpu.push({s,e:s+KT,row:0});g=s+KT}}
+ else if(M===1){cpu.push({s:0,e:LAUNCH});let g=LAUNCH;for(let i=0;i<N;i++){gpu.push({s:g,e:g+KT,row:0});g+=KT+0.5}}
+ else if(M===2){cpu.push({s:0,e:LAUNCH});let g=LAUNCH;for(let i=0;i<N;i++){const s=i?g-PRE:g;gpu.push({s,e:s+KT,row:0,ov:i>0});g=s+KT+0.2}}
+ else{cpu.push({s:0,e:LAUNCH});let g0=LAUNCH,g1=LAUNCH;for(let i=0;i<N;i++){const r=i%2;const s=r?g1:g0;gpu.push({s,e:s+KT,row:r});if(r)g1=s+KT+0.5;else g0=s+KT+0.5}}
+ return {cpu,gpu}}
+function reset(){k=0;draw()}
+function next(){if(k>=N)return false;k++;draw();return true}
+function draw(){clear(sv);const P=plan(),tot=Math.max(...P.gpu.map(g=>g.e)),sc=560/45,X=t=>90+t*sc,cols=['#185fa5','#1d9e75','#ba7517','#534ab7','#d85a30','#3b6d11'];
+ cap(sv,MODES[M]);T(sv,'CPU',20,72,{bold:1});T(sv,'GPU',20,152,{bold:1});if(M===3)T(sv,'stream 2',20,212,{size:11});
+ P.cpu.slice(0,M===0?k:1).forEach(c=>{R(sv,X(c.s),55,(c.e-c.s)*sc-2,26,{fill:'var(--purple)',stroke:'none'})});if(M>0)T(sv,M===3?'提交两个 stream':'cudaGraphLaunch（一次）',X(0)+4,100,{size:11,cls:'m'});
+ P.gpu.slice(0,k).forEach((g,i)=>{const y=g.row?190:130;R(sv,X(g.s),y,KT*sc-2,34,{fill:cols[i],stroke:'none',op:.95});R(sv,X(g.s),y,PRE*sc,34,{fill:'#fff',stroke:'none',op:.45});T(sv,'k'+i,X(g.s)+PRE*sc+4,y+22,{size:12,fill:'#fff'})});
+ if(k>=N){L(sv,X(tot),45,X(tot),235,{stroke:'var(--bad)',dash:'4 3'});T(sv,'总时间 '+tot.toFixed(1),X(tot)-4,255,{a:'end',fill:'var(--bad)'})}
+ const busy=N*KT,idle=M===3?tot*2-busy:tot-busy;stat('stt',k>=N?tot.toFixed(1):'…');stat('sg',k>=N?Math.max(0,M===3?(tot-busy/2):(tot-busy)).toFixed(1):'…');stat('sc',M===0?N:1);sy();}
+const sy=radio('g1',MODES.map((m,i)=>({id:'m'+i,label:m,value:i})),()=>M,v=>{M=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1000);
+</script></body></html>

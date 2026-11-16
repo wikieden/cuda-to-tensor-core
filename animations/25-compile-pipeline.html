@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CUDA 编译流程</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 25 章 · 从 .cu 到在 GPU 上运行</h1>
+<p class="sub">配套讲义：<a href="../lessons/25-compile-deploy.html">第 25 章 · 编译与部署：PTX、cubin、fatbin、JIT，以及 Rust host + C++ kernel</a>。nvcc 把 host 代码交给 C++ 编译器，device 代码编成 PTX 再编成 cubin，装进 fatbin。运行时驱动从 fatbin 里挑最合适的一份。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 380"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>目标 GPU：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">驱动选中</div><div class="v" id="sp"></div></div><div class="stat"><div class="l">要不要 JIT</div><div class="v" id="sj"></div></div><div class="stat"><div class="l">能用 wgmma 吗</div><div class="v" id="sw"></div></div></div>
+<p class="note">看点：① fatbin 里有 sm_80、sm_90a 两份 cubin 和一份 compute_90 PTX；② A100 → sm_80 cubin，H100 → sm_90a cubin；③ 未来的新卡没有现成 cubin，PTX 现场 JIT 编译并写入缓存，但用不了 sm_90a 专属的 wgmma。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+let G=1,k=0;const GPUS=[{l:'A100（8.0）',pick:0,jit:'否',w:'否'},{l:'H100（9.0）',pick:1,jit:'否',w:'是'},{l:'未来新卡（≥ 10）',pick:2,jit:'是（首次加载时）',w:'否（a 目标不向前兼容）'}];
+function reset(){k=0;draw()}
+function next(){if(k>=5)return false;k++;draw();return true}
+function box(x,y,w,h,s,on,c){R(sv,x,y,w,h,{fill:on?c:'var(--bg)',stroke:on?'none':'var(--line)',rx:8});T(sv,s,x+w/2,y+h/2+5,{a:'middle',size:12,fill:on?'#fff':'var(--muted)'})}
+function draw(){clear(sv);arrowDefs(sv);const g=GPUS[G];
+ cap(sv,['my.cu','nvcc 一分为二','device 代码 → PTX','ptxas：PTX → 各架构 cubin','装进 fatbin，链接进可执行文件',`运行在 ${g.l}：驱动挑一份`][k]);
+ box(20,170,90,40,'my.cu',true,'var(--purple)');
+ box(150,100,110,36,'host 代码',k>=1,'var(--muted)');box(150,240,110,36,'device 代码',k>=1,'var(--accent)');L(sv,110,190,148,118,{arrow:1});L(sv,110,190,148,258,{arrow:1});
+ box(150,40,110,36,'CPU 机器码',k>=1,'var(--muted)');L(sv,205,100,205,78,{arrow:1});
+ box(290,240,100,36,'PTX',k>=2,'var(--amber)');L(sv,260,258,288,258,{arrow:1});
+ const items=[['cubin sm_80','var(--teal)'],['cubin sm_90a','var(--teal)'],['PTX compute_90','var(--amber)']];
+ R(sv,420,150,140,200,{fill:k>=4?'var(--card)':'var(--bg)',stroke:'var(--line)',rx:10});T(sv,'fatbin',490,170,{a:'middle',bold:1});
+ items.forEach(([s,c],i)=>{const y=184+i*52,sel=k>=5&&g.pick===i;box(432,y,116,40,s,k>=3,sel?'var(--good)':c);if(k>=3)L(sv,390,258,430,y+20,{arrow:1})});
+ if(k>=5){const y=184+g.pick*52;R(sv,590,y-6,80,52,{fill:'var(--good)',stroke:'none',rx:8});T(sv,g.pick===2?'JIT 编译':'直接加载',630,y+18,{a:'middle',size:11,fill:'#fff'});T(sv,g.l.split('（')[0],630,y+34,{a:'middle',size:11,fill:'#fff'});L(sv,548,y+20,588,y+20,{arrow:1,stroke:'var(--good)'})}
+ stat('sp',k>=5?items[g.pick][0]:'…');stat('sj',k>=5?g.jit:'…');stat('sw',k>=5?g.w:'…');sy();}
+const sy=radio('g1',GPUS.map((x,i)=>({id:'g'+i,label:x.l,value:i})),()=>G,v=>{G=v;k=5;draw()});
+setupPlayer({captureSeed:1,reset,next},1400);
+</script></body></html>

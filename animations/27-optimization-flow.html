@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kernel 优化流程</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 27 章 · 拿到一个慢 kernel，按什么顺序下手</h1>
+<p class="sub">配套讲义：<a href="../lessons/27-methodology-wrap-up.html">第 27 章 · 实战方法论与全书收尾：拿到一个慢 kernel，按什么顺序下手</a>。写对 → 测 → 判断三类瓶颈 → 对应的手段箱 → 再测。选一个示例 kernel，看它沿流程走一圈。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 400"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>示例：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">判断</div><div class="v" id="sb"></div></div><div class="stat"><div class="l">下手的手段</div><div class="v" id="st"></div></div><div class="stat"><div class="l">达到 SOL</div><div class="v" id="ss"></div></div></div>
+<p class="note">看点：① 三个示例在"判断瓶颈"处走向不同分支；② 每走一圈，SOL 百分比更新一次；③ 无论哪条路，起点都是"先写对、再测"。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const EX=[{l:'RMSNorm',b:1,tools:['合并 + 向量化读写','与残差加融合','warp shuffle 分层归约'],sol:[35,62,88]},{l:'大 GEMM（BF16）',b:0,tools:['Tensor Core + TMA','warp specialization 流水线','persistent + L2 友好的 tile 顺序'],sol:[30,72,95]},{l:'decode 小 kernel 串',b:2,tools:['CUDA Graph','PDL 重叠准备段','融合 / megakernel'],sol:[55,75,85]}];
+const BN=['compute-bound','memory-bound','overhead-bound'];let e=0,k=0;
+function reset(){k=0;draw()}
+function next(){if(k>=6)return false;k++;draw();return true}
+function node(x,y,w,s,on,c){R(sv,x,y,w,38,{fill:on?c:'var(--bg)',stroke:on?'none':'var(--line)',rx:8});T(sv,s,x+w/2,y+24,{a:'middle',size:12,fill:on?'#fff':'var(--text)'})}
+function draw(){clear(sv);arrowDefs(sv);const E=EX[e];
+ cap(sv,['开始：'+E.l,'① 先写对：对拍 + compute-sanitizer','② 测：nsys 看全局、ncu 看单个','③ 判断：'+BN[E.b],'④ 第一招：'+E.tools[0],'⑤ 第二招：'+E.tools[1],'⑥ 第三招：'+E.tools[2]][k]);
+ node(20,60,130,'写对、对拍',k>=1,'var(--purple)');L(sv,150,79,180,79,{arrow:1});node(182,60,130,'测：nsys → ncu',k>=2,'var(--purple)');L(sv,312,79,342,79,{arrow:1});node(344,60,130,'判断瓶颈',k>=3,'var(--purple)');
+ BN.forEach((b,i)=>{const x=30+i*220,on=k>=3&&E.b===i;L(sv,409,98,x+80,148,{arrow:1,stroke:on?'var(--accent)':'var(--line)'});node(x,150,160,b,on,'var(--accent)')});
+ const bx=30+E.b*220;if(k>=4)E.tools.slice(0,k-3).forEach((t,i)=>{L(sv,bx+80,188+i*50,bx+80,206+i*50,{arrow:1});node(bx-20,208+i*50,200,t,true,'var(--teal)')});
+ if(k>=4)T(sv,'每用一招：改一处 → 再测 → 回到「判断瓶颈」',340,380,{a:'middle',size:12,cls:'m'});
+ stat('sb',k>=3?BN[E.b]:'…');stat('st',k>=4?E.tools[k-4]:'…');stat('ss',k>=4?E.sol[k-4]+'%':'…');sy();}
+const sy=radio('g1',EX.map((x,i)=>({id:'e'+i,label:x.l,value:i})),()=>e,v=>{e=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1500);
+</script></body></html>

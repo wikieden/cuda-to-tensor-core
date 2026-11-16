@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>paged KV 与 split-KV</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 23 章 · paged KV cache 与 split-KV</h1>
+<p class="sub">配套讲义：<a href="../lessons/23-inference-kernels.html">第 23 章 · 推理 kernel：decode 为什么是 memory-bound，以及 paged KV、split-KV、MLA、megakernel</a>。上半部分：三条序列各有一张页表，指向显存里零散的物理页（每页 8 个 token）。下半部分：序列 A 的 decode attention 分给几个 SM。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 400"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>split 段数：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">已分配物理页</div><div class="v" id="sp"></div></div><div class="stat"><div class="l">最后一页的空位</div><div class="v" id="sw"></div></div><div class="stat"><div class="l">序列 A 用到的 SM</div><div class="v" id="su"></div></div></div>
+<p class="note">看点：① 每生成一批 token，序列末页填满就分配一个新的物理页，页表多一行；② 物理页不必连续，没有碎片；③ split = 4 时 4 个 SM 各扫一段，最后按 (m, ℓ) 合并。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const PG=8;let sp=1,k=0;const LEN0={A:13,B:6,C:3},GROW={A:5,B:3,C:2};
+function state(){const len={},pages={},phys=[];let next=0;const order=[];
+ for(let t=0;t<=k;t++)for(const s of ['A','B','C']){const L=LEN0[s]+t*GROW[s];const need=Math.ceil(L/PG);pages[s]=pages[s]||[];while(pages[s].length<need){pages[s].push(next);phys[next]=s;next++}len[s]=L}
+ return {len,pages,phys,next}}
+function reset(){k=0;draw()}
+function next(){if(k>=5)return false;k++;draw();return true}
+function draw(){clear(sv);const S=state(),C={A:'var(--accent)',B:'var(--teal)',C:'var(--amber)'};
+ cap(sv,k===0?'三条序列开始 decode':`第 ${k} 批 token 生成后`);
+ ['A','B','C'].forEach((s,i)=>{const y=50+i*40;T(sv,`序列 ${s}（${S.len[s]} token）`,20,y+18,{size:12,bold:1});
+  S.pages[s].forEach((p,j)=>{R(sv,160+j*36,y,32,26,{fill:C[s],stroke:'none'});T(sv,p,176+j*36,y+18,{a:'middle',size:11,fill:'#fff'})})});
+ T(sv,'页表：格里是物理页号',160,44,{cls:'tiny'});
+ T(sv,'显存物理页',420,44,{cls:'tiny'});for(let p=0;p<20;p++){const s=S.phys[p];R(sv,420+(p%5)*48,50+Math.floor(p/5)*30,44,26,{fill:s?C[s]:'var(--bg)',stroke:s?'none':'var(--line)'});T(sv,p,442+(p%5)*48,68+Math.floor(p/5)*30,{a:'middle',size:11,fill:s?'#fff':'var(--muted)'})}
+ const y=220,LA=S.len.A,seg=Math.ceil(LA/sp);T(sv,`序列 A 的 decode attention：${LA} 个 token 的 K、V 分成 ${sp} 段`,20,y,{bold:1,size:13});
+ for(let t=0;t<LA;t++){const g=Math.floor(t/seg);R(sv,20+t*(620/Math.max(LA,1)),y+12,620/Math.max(LA,1)-1,22,{fill:['#185fa5','#1d9e75','#ba7517','#534ab7'][g],stroke:'none',rx:1})}
+ for(let g=0;g<sp;g++){R(sv,20+g*160,y+60,140,40,{fill:'var(--card)',rx:8});T(sv,`SM ${g}：算 (m${g}, ℓ${g}, O${g})`,90+g*160,y+85,{a:'middle',size:11})}
+ if(sp>1){T(sv,'合并：m = max mₛ，ℓ = Σ ℓₛ e^(mₛ − m)，O = Σ ℓₛ e^(mₛ − m) Oₛ / ℓ',20,y+130,{size:12,fill:'var(--accent)'})}
+ const last=PG*S.pages.A.length-LA;stat('sp',S.next);stat('sw',`A: ${last}`);stat('su',sp);sy();}
+const sy=radio('g1',[1,2,4].map(v=>({id:'p'+v,label:String(v),value:v})),()=>sp,v=>{sp=v;draw()});
+setupPlayer({captureSeed:1,reset,next},1400);
+</script></body></html>
