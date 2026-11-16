@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>树形归约</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 10 章 · 树形归约：前一半加后一半 vs 相邻两两</h1>
+<p class="sub">配套讲义：<a href="../lessons/10-reduction.html">第 10 章 · 归约：一百万个数求和，怎么让一千个线程分着加</a>。16 个数，每轮"谁加到谁身上"。下方把线程按 warp 着色（这里每 4 个线程算一个 warp）：亮的在干活、灰的被屏蔽。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 400"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>配对方式：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">本轮分岔的 warp 数</div><div class="v" id="sd"></div></div><div class="stat"><div class="l">本轮 shared 访问跨步</div><div class="v" id="sa"></div></div><div class="stat"><div class="l">结果</div><div class="v" id="sr"></div></div></div>
+<p class="note">看点：① 前一半加后一半：干活的线程是连续的前一半，整 warp 要么全干要么全歇；② 相邻两两：干活的线程隔一个、隔三个……每个 warp 都分岔，访问跨步越来越大（bank conflict）。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const V0=[3,1,4,1,5,9,2,6,5,3,5,8,9,7,9,3],N=16,WS=4;let mode=0,k=0;
+function rounds(){const r=[V0.slice()],act=[];let v=V0.slice();
+ if(mode===0){for(let d=N/2;d>0;d/=2){const a=[];v=v.slice();for(let t=0;t<d;t++){v[t]+=v[t+d];a.push([t,t+d])}r.push(v);act.push({a,s:d})}}
+ else{for(let s=1;s<N;s*=2){const a=[];v=v.slice();for(let t=0;t<N;t+=2*s){v[t]+=v[t+s];a.push([t,t+s])}r.push(v);act.push({a,s:2*s})}}
+ return {r,act}}
+function reset(){k=0;draw()}
+function next(){if(k>=4)return false;k++;draw();return true}
+function draw(){clear(sv);arrowDefs(sv);const {r,act}=rounds(),cw=38,x0=36;
+ cap(sv,k===0?(mode===0?'for (d = 8; d > 0; d /= 2)  if (tid < d) s[tid] += s[tid + d]':'for (s = 1; s < 16; s *= 2)  if (tid % (2s) == 0) s[tid] += s[tid + s]'):`第 ${k} 轮`);
+ for(let i=0;i<=k;i++){const y=48+i*60;r[i].forEach((v,j)=>{const hot=i>0&&act[i-1].a.some(p=>p[0]===j);R(sv,x0+j*cw,y,32,28,{fill:hot?'var(--accent-bg)':'var(--bg)',stroke:hot?'var(--accent)':'var(--line)',op:i<k&&!hot?.55:1});T(sv,v,x0+j*cw+16,y+19,{a:'middle',size:12})});
+  if(i>0)act[i-1].a.forEach(([d,s])=>{L(sv,x0+s*cw+16,y-32,x0+d*cw+16,y-2,{stroke:'var(--accent)',arrow:1});if(s!==d)L(sv,x0+d*cw+16,y-32,x0+d*cw+16,y-2,{stroke:'var(--line)'})})}
+ if(k>0){const a=act[k-1].a.map(p=>p[0]),y=360;let div=0;
+  for(let t=0;t<N;t++){const on=mode===0?a.includes(t):a.includes(t);R(sv,x0+t*cw,y,32,18,{fill:on?'var(--accent)':'var(--card)',stroke:'var(--line)'})}
+  for(let w=0;w<N/WS;w++){const lanes=[...Array(WS).keys()].map(l=>w*WS+l),n=lanes.filter(t=>a.includes(t)).length;if(n>0&&n<WS)div++;
+   L(sv,x0+w*WS*cw,y+22,x0+(w+1)*WS*cw-6,y+22,{stroke:n>0&&n<WS?'var(--bad)':'var(--good)',sw:3})}
+  T(sv,'线程（每 4 个一个 warp；下划线红 = 分岔）',x0,y-6,{cls:'tiny'});
+  stat('sd',div+' / '+N/WS);stat('sa',mode===0?`t 与 t+${act[k-1].s}，连续线程访问连续地址`:`干活线程间隔 ${act[k-1].s}`);}
+ else{stat('sd','—');stat('sa','—')}
+ stat('sr',k>=4?String(r[4][0]):'…');sy();}
+const sy=radio('g1',[{id:'m0',label:'前一半 + 后一半',value:0},{id:'m1',label:'相邻两两',value:1}],()=>mode,v=>{mode=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1600);
+</script></body></html>

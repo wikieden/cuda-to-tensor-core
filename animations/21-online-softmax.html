@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>online softmax</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 21 章 · online softmax 边读边改账</h1>
+<p class="sub">配套讲义：<a href="../lessons/21-online-softmax-fusion.html">第 21 章 · online softmax 与算子融合：少读一遍显存就是快</a>。一行 8 个数从左往右读入，记分板维护当前最大值 m 和分母 ℓ = Σ e^(x − m)。遇到更大的数，旧的 ℓ 先乘 e^(m_old − m_new) 打折。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 360"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>数据：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">m</div><div class="v" id="sm"></div></div><div class="stat"><div class="l">ℓ</div><div class="v" id="sl"></div></div><div class="stat"><div class="l">读取遍数（online / 三遍法）</div><div class="v" id="sr"></div></div></div>
+<p class="note">看点：① "开头最大"时从不需要打折；② "递增"时每一步都要打折；③ 最后一帧和直接算的 ℓ 完全一致，但只读了一遍（三遍法要读三遍）。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const DATA=[{l:'随机',v:[1,3,2,0.5,4,2.5,1,3.5]},{l:'递增',v:[0,0.5,1,1.5,2,2.5,3,3.5]},{l:'开头最大',v:[4,1,2,0.5,3,2.5,1,3.5]}];
+let d=0,k=0;
+function run(){const v=DATA[d].v,out=[];let m=-Infinity,l=0;v.forEach(x=>{const mn=Math.max(m,x),f=m===-Infinity?0:Math.exp(m-mn),resc=mn>m&&m!==-Infinity;l=l*f+Math.exp(x-mn);out.push({x,m:mn,l,resc,f});m=mn});return out}
+function reset(){k=0;draw()}
+function next(){if(k>=9)return false;k++;draw();return true}
+function draw(){clear(sv);const v=DATA[d].v,H=run(),cur=H[Math.min(k,8)-1];
+ cap(sv,k===0?'m = −∞，ℓ = 0':k<=8?(cur.resc?`读到 ${cur.x}：更大！旧 ℓ × e^(${H[k-2].m} − ${cur.m}) = × ${cur.f.toFixed(3)}，再加 e^0`:`读到 ${cur.x}：m 不变，ℓ += e^(${cur.x} − ${cur.m})`):'读完：和直接计算对比');
+ v.forEach((x,i)=>{const on=i<k,now=i===k-1;R(sv,30+i*78,60,66,44,{fill:now?'var(--accent)':on?'var(--accent-bg)':'var(--bg)',stroke:now?'var(--accent)':'var(--line)'});T(sv,x,63+i*78,88,{a:'middle',bold:now,fill:now?'#fff':'var(--text)'});
+  if(on&&H[i].resc)T(sv,'打折',63+i*78,124,{a:'middle',size:11,fill:'var(--bad)'})});
+ R(sv,30,150,300,110,{fill:'var(--card)',rx:10});T(sv,'记分板',46,176,{bold:1});
+ T(sv,'m = '+(k===0?'−∞':cur?cur.m:'—'),46,206,{mono:1,size:15});T(sv,'ℓ = '+(k===0?'0':cur?cur.l.toFixed(4):'—'),46,236,{mono:1,size:15});
+ if(k>=9){const m=Math.max(...v),direct=v.reduce((a,x)=>a+Math.exp(x-m),0);R(sv,360,150,290,110,{fill:'var(--bg)',stroke:'var(--good)',rx:10});T(sv,'直接算 Σ e^(x − max)',376,176,{bold:1});T(sv,direct.toFixed(4),376,210,{mono:1,size:15,fill:'var(--good)'});T(sv,'online 读 1 遍得到 m、ℓ，再 1 遍输出',376,240,{size:12})}
+ T(sv,'三遍法：求 max → 求 Σ → 输出（读 3 遍）；online：求 (m, ℓ) → 输出（读 2 遍）',30,300,{size:12,cls:'m'});
+ stat('sm',k===0?'−∞':cur?cur.m:'—');stat('sl',k===0?'0':cur?cur.l.toFixed(4):'—');stat('sr','2 遍 / 3 遍');sy();}
+const sy=radio('g1',DATA.map((x,i)=>({id:'d'+i,label:x.l,value:i})),()=>d,v=>{d=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1300);
+</script></body></html>

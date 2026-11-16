@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>warp shuffle 归约</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 11 章 · shuffle down 与 shuffle xor</h1>
+<p class="sub">配套讲义：<a href="../lessons/11-warp-shuffle-atomics.html">第 11 章 · warp shuffle 与原子操作：不经过 shared memory 交换数据</a>。8 个 lane 代表一个 warp 的 32 个。格子里是这个 lane 寄存器里的值；箭头是"谁从谁那里拿值"。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 360"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>shuffle 方式：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">shuffle 次数</div><div class="v" id="ss"></div></div><div class="stat"><div class="l">shared memory 访问</div><div class="v" id="sm"></div></div><div class="stat"><div class="l">block 同步</div><div class="v" id="sy"></div></div></div>
+<p class="note">看点：① down：每步 lane t 加上 lane t+d，最后只有 lane 0 是总和（金色）；② xor：lane t 和 t^m 互换相加，最后每个 lane 都是总和；③ 全程不碰 shared memory、不需要 __syncthreads()。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const V0=[3,1,4,1,5,9,2,6],N=8;let mode=0,k=0;
+function steps(){const out=[V0.slice()],ar=[];let v=V0.slice();const ds=mode===0?[4,2,1]:[1,2,4];
+ ds.forEach(d=>{const nv=v.slice(),a=[];for(let t=0;t<N;t++){const src=mode===0?t+d:t^d;if(src<N){nv[t]=v[t]+v[src];a.push([src,t])}}v=nv;out.push(v);ar.push({a,d})});return {out,ar}}
+function reset(){k=0;draw()}
+function next(){if(k>=3)return false;k++;draw();return true}
+function draw(){clear(sv);arrowDefs(sv);const {out,ar}=steps(),cw=74,x0=40;
+ cap(sv,k===0?(mode===0?'v += __shfl_down_sync(0xffffffff, v, d)，d = 4, 2, 1':'v += __shfl_xor_sync(0xffffffff, v, m)，m = 1, 2, 4'):`第 ${k} 步：${mode===0?'d':'m'} = ${ar[k-1].d}`);
+ for(let i=0;i<=k;i++){const y=50+i*72;T(sv,i===0?'初始':'第 '+i+' 步',x0-30,y+22,{a:'start',cls:'tiny'});
+  out[i].forEach((v,j)=>{const gold=i===3&&(mode===1||j===0);R(sv,x0+j*cw,y,58,32,{fill:gold?'var(--amber)':i===k?'var(--accent-bg)':'var(--bg)',stroke:gold?'var(--amber)':'var(--line)'});T(sv,v,x0+j*cw+29,y+21,{a:'middle',bold:gold,fill:gold?'#fff':'var(--text)'});if(i===0)T(sv,'lane '+j,x0+j*cw+29,y-4,{a:'middle',cls:'tiny'})});
+  if(i>0)ar[i-1].a.forEach(([s,t])=>L(sv,x0+s*cw+29,y-38,x0+t*cw+29+(s>t?6:-6),y-2,{stroke:mode===0?'var(--accent)':'var(--purple)',arrow:1}))}
+ stat('ss',k);stat('sm',0);stat('sy',0);sy();}
+const sy=radio('g1',[{id:'d',label:'down',value:0},{id:'x',label:'xor',value:1}],()=>mode,v=>{mode=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1600);
+</script></body></html>

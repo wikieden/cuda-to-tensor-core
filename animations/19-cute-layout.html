@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CuTe layout</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 19 章 · 同一个 4 × 8 矩阵，四种 layout</h1>
+<p class="sub">配套讲义：<a href="../lessons/19-cute-layout.html">第 19 章 · CuTe：用 (Shape, Stride) 描述一切数据布局</a>。左边是逻辑坐标 (i, j)，右边是一维内存。按 colexicographical 顺序（i 变化最快）逐个点亮坐标，显示 index = Σ 坐标 × 步长。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 380"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>Layout：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">Layout</div><div class="v" id="sl"></div></div><div class="stat"><div class="l">size</div><div class="v" id="sz"></div></div><div class="stat"><div class="l">cosize（用到的内存跨度）</div><div class="v" id="sc"></div></div></div>
+<p class="note">看点：① 列优先：一列的 4 个元素在内存里连续；② 行优先：一行的 8 个连续；③ padding：每列之间空 1 格（cosize 39 > 32）；④ 分块：每个 2 × 2 小块的 4 个元素连续。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const LAY=[{l:'(4,8):(1,4)',f:(i,j)=>i+4*j},{l:'(4,8):(8,1)',f:(i,j)=>8*i+j},{l:'(4,8):(1,5)',f:(i,j)=>i+5*j},{l:'((2,2),(2,4)):((1,4),(2,8))',f:(i,j)=>(i%2)+4*Math.floor(i/2)+2*(j%2)+8*Math.floor(j/2)}];
+let m=0,k=0;const NI=4,NJ=8;
+function reset(){k=0;draw()}
+function next(){if(k>=8)return false;k++;draw();return true}
+function draw(){clear(sv);arrowDefs(sv);const f=LAY[m].f,n=k*4,cos=Math.max(...[...Array(32).keys()].map(x=>f(x%NI,Math.floor(x/NI))))+1;
+ cap(sv,k===0?LAY[m].l:`一维坐标 0 … ${n-1}`);
+ const pal=['#185fa5','#1d9e75','#ba7517','#534ab7','#d85a30','#3b6d11','#a32d2d','#5f5e5a'];
+ for(let i=0;i<NI;i++)for(let j=0;j<NJ;j++){const x1=i+NI*j,on=x1<n;R(sv,30+j*34,60+i*34,30,30,{fill:on?pal[j]:'var(--bg)',stroke:on?'none':'var(--line)'});T(sv,on?f(i,j):`${i},${j}`,45+j*34,80+i*34,{a:'middle',size:on?12:9,fill:on?'#fff':'var(--muted)'})}
+ T(sv,'逻辑坐标 (i, j)，格里数字 = 映射到的内存位置',30,52,{cls:'tiny'});
+ const MX=40;for(let p=0;p<MX;p++){const x=30+(p%20)*31,y=250+Math.floor(p/20)*44;let owner=-1;for(let q=0;q<n;q++){if(f(q%NI,Math.floor(q/NI))===p)owner=Math.floor(q/NI)}
+  R(sv,x,y,27,26,{fill:owner>=0?pal[owner]:p<cos?'var(--bg)':'var(--card)',stroke:owner>=0?'none':'var(--line)',op:p<cos?1:.4});T(sv,p,x+13.5,y+38,{a:'middle',cls:'tiny'})}
+ T(sv,'一维内存（同色 = 逻辑上同一列 j）',30,242,{cls:'tiny'});
+ if(k>0&&k<=8){const q=n-1,i=q%NI,j=Math.floor(q/NI);T(sv,`(${i}, ${j}) → ${f(i,j)}`,330,140,{mono:1,size:14,bold:1})}
+ stat('sl',LAY[m].l);stat('sz',32);stat('sc',cos);sy();}
+const sy=radio('g1',LAY.map((l,i)=>({id:'y'+i,label:['列优先','行优先','padding','2×2 分块'][i],value:i})),()=>m,v=>{m=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1100);
+</script></body></html>

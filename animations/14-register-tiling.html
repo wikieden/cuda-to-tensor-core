@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>寄存器分块</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 14 章 · 一个线程算 1 个 vs 算 8 × 8 个</h1>
+<p class="sub">配套讲义：<a href="../lessons/14-sgemm-register-tiling.html">第 14 章 · SGEMM ②：寄存器分块、向量化与 warptiling</a>。中间是一个线程负责的 C 小块。每一步（K 方向走一步）：从 shared 读 A 的一小列、B 的一小行进寄存器，做一次外积。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 400"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>每线程结果数 TM × TN：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">shared 读次数</div><div class="v" id="sr"></div></div><div class="stat"><div class="l">乘加次数</div><div class="v" id="sf"></div></div><div class="stat"><div class="l">乘加 ÷ 读</div><div class="v" id="sq"></div></div></div>
+<p class="note">看点：① 读的是"边"（TM + TN 个），算的是"面积"（TM × TN 次）；② 1 × 1 时比值 0.5，8 × 8 时 4；③ 同样 16 个结果，4 × 4 比 16 × 1 好。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const SH=[[1,1],[8,1],[4,4],[8,8]];let m=3,k=0;const K=4;
+function reset(){k=0;draw()}
+function next(){if(k>=K)return false;k++;draw();return true}
+function draw(){clear(sv);const [TM,TN]=SH[m],cs=Math.min(30,200/Math.max(TM,TN)),x0=260,y0=140;
+ cap(sv,k===0?`每个线程算 ${TM} × ${TN} = ${TM*TN} 个 C`:`K 方向第 ${k} 步：读 ${TM} + ${TN} 个，做 ${TM*TN} 次乘加`);
+ for(let i=0;i<TM;i++){R(sv,x0-cs-14,y0+i*cs,cs-2,cs-2,{fill:k>0?'var(--amber)':'var(--card)',stroke:'none'})}
+ for(let j=0;j<TN;j++){R(sv,x0+j*cs,y0-cs-14,cs-2,cs-2,{fill:k>0?'var(--purple)':'var(--card)',stroke:'none'})}
+ T(sv,'regM（A 的一列）',x0-cs-14,y0+TM*cs+16,{cls:'tiny'});T(sv,'regN（B 的一行）',x0,y0-cs-22,{cls:'tiny'});
+ for(let i=0;i<TM;i++)for(let j=0;j<TN;j++){R(sv,x0+j*cs,y0+i*cs,cs-2,cs-2,{fill:k>0?'var(--accent)':'var(--accent-bg)',stroke:'none'});if(cs>=20)T(sv,k,x0+j*cs+cs/2-1,y0+i*cs+cs/2+4,{a:'middle',size:10,fill:'#fff'})}
+ const reads=k*(TM+TN),fma=k*TM*TN,bx=520;
+ [['shared 读',reads,'var(--amber)'],['乘加',fma,'var(--accent)']].forEach(([n,v,c],i)=>{const h=v/(K*64)*220;R(sv,bx+i*70,340-h,46,Math.max(h,1),{fill:c,stroke:'none'});T(sv,v,bx+i*70+23,334-h,{a:'middle',size:12});T(sv,n,bx+i*70+23,358,{a:'middle',cls:'tiny'})});
+ stat('sr',reads);stat('sf',fma);stat('sq',(TM*TN/(TM+TN)).toFixed(2));sy();}
+const sy=radio('g1',SH.map((s,i)=>({id:'s'+i,label:s[0]+' × '+s[1],value:i})),()=>m,v=>{m=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1300);
+</script></body></html>

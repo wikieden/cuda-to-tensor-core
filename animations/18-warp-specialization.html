@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>warp specialization</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 18 章 · 生产者–消费者环形缓冲区</h1>
+<p class="sub">配套讲义：<a href="../lessons/18-hopper-wgmma-warp-specialization.html">第 18 章 · Hopper ②：wgmma、warp specialization 与 persistent kernel</a>。中间一圈是 shared memory 的 slot。左边生产者 warpgroup 只发 TMA，右边消费者 warpgroup 只做 wgmma；每个 slot 有 full / empty 两盏灯。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 380"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>slot 数：</label><span id="g1"></span><label style="margin-left:12px">谁更快：</label><span id="g2"></span></div>
+<div class="stats"><div class="stat"><div class="l">生产者已装</div><div class="v" id="sp"></div></div><div class="stat"><div class="l">消费者已算</div><div class="v" id="sc"></div></div><div class="stat"><div class="l">当前谁在等</div><div class="v" id="sw"></div></div></div>
+<p class="note">看点：① 生产者等 empty[i]、装满后 full[i] 亮；消费者等 full[i]、算完后 empty[i] 亮；② 生产者快时缓冲区很快装满、生产者开始等 empty；③ 消费者快时消费者等 full。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+let Q=4,F=0,k=0;const SP=[[1,3,'生产者快'],[3,1,'消费者快']],TICKS=16;
+function sim(){const [tp,tc]=SP[F],st=Array(Q).fill('empty');let p=0,c=0,pb=0,cb=0,pw='',cw='',hist=[];
+ for(let t=0;t<TICKS;t++){
+  if(pb>0){pb--;if(pb===0){st[(p)%Q]='full';p++}}
+  if(cb>0){cb--;if(cb===0){st[c%Q]='empty';c++}}
+  pw=cw='';
+  if(pb===0){if(st[p%Q]==='empty'){st[p%Q]='loading';pb=tp}else pw='生产者等 empty'}
+  if(cb===0){if(st[c%Q]==='full'){st[c%Q]='computing';cb=tc}else cw='消费者等 full'}
+  hist.push({st:st.slice(),p,c,pw,cw})}
+ return hist}
+function reset(){k=0;draw()}
+function next(){if(k>=TICKS-1)return false;k++;draw();return true}
+function draw(){clear(sv);const H=sim()[k],cx=340,cy=200,r=110;
+ cap(sv,`时刻 ${k}`);
+ R(sv,20,140,150,110,{fill:'var(--purple)',stroke:'none',rx:10});T(sv,'生产者',95,175,{a:'middle',fill:'#fff',bold:1});T(sv,'warpgroup：发 TMA',95,198,{a:'middle',fill:'#fff',size:11});
+ R(sv,510,140,150,110,{fill:'var(--teal)',stroke:'none',rx:10});T(sv,'消费者',585,175,{a:'middle',fill:'#fff',bold:1});T(sv,'warpgroup：wgmma',585,198,{a:'middle',fill:'#fff',size:11});
+ const COL={empty:'var(--bg)',loading:'var(--purple)',full:'var(--amber)',computing:'var(--teal)'},NM={empty:'空',loading:'搬运中',full:'满',computing:'计算中'};
+ H.st.forEach((s,i)=>{const a=-Math.PI/2+i*2*Math.PI/Q,x=cx+r*Math.cos(a)-40,y=cy+r*Math.sin(a)-22;R(sv,x,y,80,44,{fill:COL[s],stroke:'var(--line)',rx:8});T(sv,`slot ${i}`,x+40,y+18,{a:'middle',size:11,fill:s==='empty'?'var(--text)':'#fff'});T(sv,NM[s],x+40,y+35,{a:'middle',size:11,fill:s==='empty'?'var(--muted)':'#fff'});
+  el('circle',{cx:x+8,cy:y+8,r:4,fill:s==='full'?'var(--amber)':'var(--line)'},sv);el('circle',{cx:x+72,cy:y+8,r:4,fill:s==='empty'?'var(--good)':'var(--line)'},sv)});
+ T(sv,'slot 左上小灯 = full，右上小灯 = empty',cx,372,{a:'middle',cls:'tiny'});
+ if(H.pw)T(sv,H.pw,95,275,{a:'middle',fill:'var(--bad)',size:12});if(H.cw)T(sv,H.cw,585,275,{a:'middle',fill:'var(--bad)',size:12});
+ stat('sp',H.p);stat('sc',H.c);stat('sw',[H.pw,H.cw].filter(Boolean).join('、')||'都在干活');s1();s2();}
+const s1=radio('g1',[2,4].map(v=>({id:'q'+v,label:String(v),value:v})),()=>Q,v=>{Q=v;reset()});
+const s2=radio('g2',SP.map((s,i)=>({id:'f'+i,label:s[2],value:i})),()=>F,v=>{F=v;reset()});
+setupPlayer({captureSeed:1,reset,next},700);
+</script></body></html>

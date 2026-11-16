@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>合并访存</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 6 章 · 一个 warp 的 32 个地址落在几箱里</h1>
+<p class="sub">配套讲义：<a href="../lessons/06-coalescing.html">第 6 章 · 合并访存：一个 warp 一次读显存，要搬几趟</a>。显存按 32 字节一箱（8 个 float）发货。上排是 warp 的 32 个线程，下排是被碰到的箱子，箱里亮的格子才是真正用到的。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 360"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>跨步 stride：</label><span id="g1"></span><label style="margin-left:12px">偏移 offset：</label><span id="g2"></span></div>
+<div class="stats"><div class="stat"><div class="l">搬了几箱</div><div class="v" id="sn"></div></div><div class="stat"><div class="l">搬来 / 用到的字节</div><div class="v" id="sb"></div></div><div class="stat"><div class="l">利用率</div><div class="v" id="su"></div></div></div>
+<p class="note">看点：① 跨步 1、偏移 0：4 箱、100%；② 偏移 1：5 箱；③ 跨步 s：利用率 1/s，跨步 ≥ 8 时一人一箱，只剩 12.5%。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+let st=1,off=0,k=0;
+function addr(t){return t*st+off}
+function reset(){k=0;draw()}
+function next(){if(k>=9)return false;k++;draw();return true}
+function draw(){clear(sv);arrowDefs(sv);const n=Math.min(32,k*4),secs=[...new Set([...Array(32).keys()].map(t=>Math.floor(addr(t)/8)))].sort((a,b)=>a-b);
+ const shown=[...new Set([...Array(n).keys()].map(t=>Math.floor(addr(t)/8)))];
+ cap(sv,k===0?`线程 t 读 a[${st} × t + ${off}]（float，4 字节）`:k<9?`前 ${n} 个线程已发出请求`:`一共 ${secs.length} 箱 = ${secs.length*32} 字节，用到 128 字节`);
+ for(let t=0;t<32;t++){const x=20+t*20;R(sv,x,50,16,22,{fill:t<n?'var(--accent)':'var(--card)',stroke:t<n?'var(--accent)':'var(--line)'});if(t%4===0)T(sv,t,x+8,88,{a:'middle',cls:'tiny'})}
+ T(sv,'warp 的 32 个线程',20,44,{cls:'m'});
+ const W=Math.min(80,640/Math.max(secs.length,1)),cw=(W-4)/8;
+ secs.forEach((s,i)=>{const x=20+i*W,on=shown.includes(s);R(sv,x,220,W-4,40,{fill:on?'var(--accent-bg)':'var(--bg)',stroke:on?'var(--accent)':'var(--line)',op:on?1:.35});
+  for(let c=0;c<8;c++){const a=s*8+c,used=[...Array(n).keys()].some(t=>addr(t)===a);if(used)R(sv,x+c*cw,224,cw-1,32,{fill:'var(--teal)',stroke:'none',rx:1})}
+  if(W>30||i%4===0)T(sv,'箱 '+s,x+(W-4)/2,276,{a:'middle',cls:'tiny'})});
+ for(let t=0;t<n;t++){const s=Math.floor(addr(t)/8),i=secs.indexOf(s),cx=20+i*W+(addr(t)%8+.5)*cw;L(sv,20+t*20+8,74,cx,218,{stroke:'var(--accent)'})}
+ T(sv,'被碰到的 32 字节箱（青色 = 真正用到的 float）',20,300,{cls:'m'});
+ const used=secs.length;stat('sn',k>=9?used:'…');stat('sb',k>=9?`${used*32} / 128`:'…');stat('su',k>=9?(128/(used*32)*100).toFixed(1)+'%':'…');s1();s2();}
+const s1=radio('g1',[1,2,4,8,32].map(v=>({id:'s'+v,label:String(v),value:v})),()=>st,v=>{st=v;reset()});
+const s2=radio('g2',[0,1].map(v=>({id:'o'+v,label:String(v),value:v})),()=>off,v=>{off=v;reset()});
+setupPlayer({captureSeed:1,reset,next},900);
+</script></body></html>

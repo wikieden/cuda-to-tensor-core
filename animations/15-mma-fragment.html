@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tensor Core 片段</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 15 章 · 一个 warp 合作完成 m16n8k16</h1>
+<p class="sub">配套讲义：<a href="../lessons/15-tensor-core-mma.html">第 15 章 · Tensor Core：WMMA、mma.sync 与 ldmatrix</a>。A（16 × 16）、B（16 × 8）、D（16 × 8）。高亮的格子是当前 lane 寄存器里拿着的元素：A 8 个、B 4 个、D 4 个（按 PTX §9.7.16.5.8 的布局）。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 380"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>看哪个 lane：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">当前 lane</div><div class="v" id="sl"></div></div><div class="stat"><div class="l">groupID = lane / 4</div><div class="v" id="sg"></div></div><div class="stat"><div class="l">tid_in_group = lane % 4</div><div class="v" id="st"></div></div></div>
+<p class="note">看点：① 每个 lane 拿的 A 元素分在两行（g 和 g+8）、四列；② 32 个 lane 正好把 256 个 A 元素分完；③ 最后一帧：一条 mma.sync = 2048 次乘加，CUDA core 要 32 个线程各发 64 条 FMA。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+let lane=0,k=0;const SEQ=[0,1,2,3,4,5,13,31];
+function fragA(l){const g=l>>2,t=l%4,o=[];[[g,2*t],[g,2*t+1],[g+8,2*t],[g+8,2*t+1],[g,2*t+8],[g,2*t+9],[g+8,2*t+8],[g+8,2*t+9]].forEach(p=>o.push(p));return o}
+function fragB(l){const g=l>>2,t=l%4;return [[2*t,g],[2*t+1,g],[2*t+8,g],[2*t+9,g]]}
+function fragD(l){const g=l>>2,t=l%4;return [[g,2*t],[g,2*t+1],[g+8,2*t],[g+8,2*t+1]]}
+function reset(){k=0;lane=SEQ[0];draw()}
+function next(){if(k>=SEQ.length)return false;k++;if(k<SEQ.length)lane=SEQ[k];draw();return true}
+function mat(x,y,rows,cols,cs,hit,col,all){for(let i=0;i<rows;i++)for(let j=0;j<cols;j++){const h=hit.some(p=>p[0]===i&&p[1]===j);R(sv,x+j*cs,y+i*cs,cs-1,cs-1,{fill:all?col:h?col:'var(--bg)',stroke:h||all?'none':'var(--line)',rx:1,op:all?.85:1})}}
+function draw(){clear(sv);const all=k>=SEQ.length,cs=13;
+ cap(sv,all?'32 个 lane 合起来：一条 mma.sync 做 16 × 8 × 16 = 2048 次乘加':`lane ${lane}：A 拿 8 个、B 拿 4 个、D 拿 4 个`);
+ T(sv,'A 16 × 16',20,52,{bold:1});mat(20,60,16,16,cs,fragA(lane),'var(--amber)',all);
+ T(sv,'B 16 × 8',260,52,{bold:1});mat(260,60,16,8,cs,fragB(lane),'var(--purple)',all);
+ T(sv,'D 16 × 8',400,52,{bold:1});mat(400,60,16,8,cs,fragD(lane),'var(--teal)',all);
+ T(sv,'每个 lane 的寄存器：A 4 个（每个装 2 个 BF16）、B 2 个、D 4 个 FP32',20,300,{size:12});
+ T(sv,'g = lane / 4 决定行（g 和 g + 8），t = lane % 4 决定列（2t、2t + 1，A 还有 +8）',20,322,{size:12,cls:'m'});
+ if(all)T(sv,'同样的计算用 CUDA core：32 线程 × 64 条 FMA',20,350,{size:12,fill:'var(--bad)'});
+ stat('sl',all?'全部':lane);stat('sg',all?'—':lane>>2);stat('st',all?'—':lane%4);sy();}
+const sy=radio('g1',[0,1,4,5,13,31].map(v=>({id:'l'+v,label:'lane '+v,value:v})),()=>lane,v=>{lane=v;k=0;draw()});
+setupPlayer({captureSeed:1,reset,next},1300);
+</script></body></html>

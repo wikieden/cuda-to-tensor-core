@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bank conflict</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.mono{font-family:ui-monospace,Menlo,monospace}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 7 章 · 32 个 bank 前的排队</h1>
+<p class="sub">配套讲义：<a href="../lessons/07-shared-memory-banks.html">第 7 章 · shared memory 与 bank conflict</a>。画成 16 个线程、16 个 bank（规律和 32 个一样）。同一个 bank 上叠了几个不同地址，就要排几轮：几路冲突。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 380"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl" id="ctl"><label>访问方式：</label><span id="g1"></span></div>
+<div class="stats"><div class="stat"><div class="l">几路冲突</div><div class="v" id="sw"></div></div><div class="stat"><div class="l">需要几个周期</div><div class="v" id="sc"></div></div><div class="stat"><div class="l">bank 号公式</div><div class="v" id="sa"></div></div></div>
+<p class="note">看点：① 按行读 tile[c][t]：每个线程一个 bank；② 按列读 tile[t][c]：全挤在同一个 bank，16 路冲突；③ 加 padding（每行 17 个）后 bank = (t + c) % 16，冲突消失；④ 跨步 2 → 2 路，跨步 3（奇数）→ 无冲突。</p>
+</main>
+<script src="anim.js"></script>
+<script src="cuda-anim.js"></script>
+<script>
+const sv=$('sv');
+const NB=16;let mode=1,k=0;
+const MODES=[{l:'按行 tile[c][t]',f:t=>3*NB+t,fm:'(3·16 + t) % 16 = t'},{l:'按列 tile[t][c]',f:t=>t*NB+3,fm:'(t·16 + 3) % 16 = 3'},{l:'按列 + padding',f:t=>t*(NB+1)+3,fm:'(t·17 + 3) % 16 = (t + 3) % 16'},
+ {l:'跨步 2',f:t=>2*t,fm:'2t % 16'},{l:'跨步 3',f:t=>3*t,fm:'3t % 16'}];
+function reset(){k=0;draw()}
+function next(){if(k>=5)return false;k++;draw();return true}
+function draw(){clear(sv);const f=MODES[mode].f,n=Math.min(NB,k*4),cnt=Array(NB).fill(0);
+ cap(sv,k===0?MODES[mode].l:k<5?`前 ${n} 个线程发出请求`:'');
+ for(let t=0;t<NB;t++){const x=30+t*39;R(sv,x,50,30,26,{fill:t<n?'var(--accent)':'var(--card)',stroke:t<n?'var(--accent)':'var(--line)'});T(sv,'t'+t,x+15,67,{a:'middle',size:11,fill:t<n?'#fff':'var(--muted)'})}
+ const stacks=Array(NB).fill(0).map(()=>[]);for(let t=0;t<n;t++){const a=f(t),b=a%NB;stacks[b].push(a)}
+ const mx=Math.max(1,...stacks.map(s=>s.length)),hh=Math.min(22,190/mx);
+ for(let t=0;t<n;t++){const a=f(t),b=a%NB,lvl=stacks[b].indexOf(a);L(sv,30+t*39+15,78,30+b*39+15,300-(lvl+1)*hh,{stroke:'var(--accent)'})}
+ for(let b=0;b<NB;b++){const x=30+b*39,h=stacks[b].length,bad=h>1;R(sv,x,304,30,24,{fill:'var(--card)'});T(sv,'b'+b,x+15,320,{a:'middle',size:11});
+  stacks[b].forEach((a,i)=>{R(sv,x,300-(i+1)*hh,30,hh-2,{fill:bad?'var(--bad)':'var(--teal)',stroke:'none',rx:2});if(hh>=14)T(sv,a,x+15,300-(i+1)*hh+hh*.65,{a:'middle',size:10,fill:'#fff'})})}
+ T(sv,'方块里的数字 = 字地址；bank = 字地址 % 16',30,356,{cls:'m'});
+ const way=Math.max(1,...stacks.map(s=>s.length));stat('sw',k>=5?way+' 路':'…');stat('sc',k>=5?way+' 个周期':'…');stat('sa',MODES[mode].fm);sy();}
+const sy=radio('g1',MODES.map((m,i)=>({id:'m'+i,label:m.l,value:i})),()=>mode,v=>{mode=v;reset()});
+setupPlayer({captureSeed:1,reset,next},1100);
+</script></body></html>

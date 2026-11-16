@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>线程编号到数据下标</title><link rel="stylesheet" href="anim.css">
+<style>svg text.cap{font-size:15px;font-weight:500}svg text.code{font-family:ui-monospace,Menlo,monospace;font-size:13px}svg text.tiny{font-size:10px;fill:var(--muted)}</style></head>
+<body><main>
+<h1>第 1 章 · 线程编号怎么对到数据下标</h1>
+<p class="sub">配套讲义：<a href="../lessons/01-thread-hierarchy.html">第 1 章 · 一个 kernel 怎么分给成千上万个线程：grid / block / thread 与全局编号</a>。上排是线程（按 block 框起来），下排是数组元素。每个线程用 <code>i = blockIdx.x × blockDim.x + threadIdx.x</code> 找到自己负责的那一格。</p>
+<div class="panel"><svg id="sv" viewBox="0 0 680 380"></svg></div>
+<div class="row"><button id="play">▶ 播放</button><button id="step">→ 单步</button><button id="reset">↺ 从头开始</button></div>
+<div class="row ctl"><label>block 大小 blockDim.x：</label><button id="b4">4</button><button id="b8">8</button><button id="b16">16</button>
+<label style="margin-left:12px">数据长度 n：</label><button id="n27">27</button><button id="n32">32</button></div>
+<div class="stats"><div class="stat"><div class="l">gridDim.x = ⌈n / blockDim.x⌉</div><div class="v" id="sg"></div></div>
+<div class="stat"><div class="l">总线程数</div><div class="v" id="st"></div></div>
+<div class="stat"><div class="l">空转线程（i ≥ n）</div><div class="v" id="si"></div></div></div>
+<p class="note">看点：① 线程和数组元素上下正好对齐——全局编号就是"把 (block 号, 线程号) 拉成一条直线"；② block 号每加 1，起点跳 blockDim.x 格；③ 最后一帧红色线程的 i ≥ n，<code>if (i &lt; n)</code> 不成立，什么也不做。答完讲义题 2 再换开关，数一数空转线程。</p>
+</main>
+<script src="anim.js"></script>
+<script>
+const sv=$('sv');
+let B=8,N=27,k=0;
+const G=()=>Math.ceil(N/B);
+const X0=14,W=19,GAP=4;
+const tx=g=>X0+g*W+Math.floor(g/B)*GAP;   // 第 g 个线程（全局编号）的横坐标
+const TY=92,AY=230,SZ=16;
+// 帧：0 = 开场；1..G = 依次点亮 block；G+1 = 空转线程；G+2 = 全部对上
+function frames(){return G()+3}
+function caption(){
+  const g=G();
+  if(k===0)return `kernel<<<${g}, ${B}>>>：${g} 个 block × ${B} 个线程 = ${g*B} 个线程，数据 n = ${N}`;
+  if(k<=g){const b=k-1;return `第 ${b} 号 block：起点 = blockIdx.x × blockDim.x = ${b} × ${B} = ${b*B}`}
+  if(k===g+1)return g*B>N?`编号 ${N}–${g*B-1} 的 ${g*B-N} 个线程越界：if (i < n) 不成立，什么也不做`:`n 正好是 ${B} 的整数倍，没有空转线程`;
+  return `${N} 个元素每个正好被一个线程负责，不重不漏`;
+}
+function draw(){
+  clear(sv);
+  const g=G(),T=g*B;
+  txt(caption(),{x:340,y:24,'text-anchor':'middle',class:'cap'},sv);
+  const cur=(k>=1&&k<=g)?k-1:-1;
+  const showIdle=k>=g+1, all=k>=g+2, past=b=>b<cur||k>g;
+  txt('线程（thread）',{x:X0,y:TY-34,class:'m'},sv);
+  txt('数组元素 c[i]',{x:X0,y:AY+SZ+34,class:'m'},sv);
+  // block 框
+  for(let b=0;b<g;b++){
+    const x=tx(b*B)-3,w=B*W+2;
+    const on=b===cur;
+    el('rect',{x,y:TY-20,width:w,height:SZ+40,rx:6,fill:on?'var(--accent-bg)':'none',stroke:on?'var(--accent)':'var(--line)','stroke-width':on?2:1},sv);
+    const t=txt(`block ${b}`,{x:x+w/2,y:TY-6,'text-anchor':'middle',class:'tiny'},sv);
+    if(on){t.style.fill='var(--accent)';t.style.fontWeight='600'}
+  }
+  // 连线
+  for(let i=0;i<T;i++){
+    const b=Math.floor(i/B);
+    const lit=(b===cur||all)&&i<N;
+    if(lit||(past(b)&&i<N)){
+      el('line',{x1:tx(i)+SZ/2,y1:TY+SZ+16,x2:tx(i)+SZ/2,y2:AY-2,stroke:lit?'var(--accent)':'var(--line)','stroke-width':lit?1.5:1},sv);
+    }
+  }
+  // 线程方块
+  for(let i=0;i<T;i++){
+    const b=Math.floor(i/B),t=i%B;
+    const idle=i>=N;
+    let fill='var(--bg)',stroke='var(--line)';
+    if(b===cur&&!idle){fill='var(--accent)';stroke='var(--accent)'}
+    else if(past(b)&&!idle){fill='var(--accent-bg)';stroke='var(--accent)'}
+    if(idle&&(showIdle||b===cur)){fill='var(--bad)';stroke='var(--bad)'}
+    el('rect',{x:tx(i),y:TY,width:SZ,height:SZ,rx:3,fill,stroke},sv);
+    const lab=txt(String(t),{x:tx(i)+SZ/2,y:TY+SZ+12,'text-anchor':'middle',class:'tiny'},sv);
+    if(B===16&&t%2)lab.textContent='';
+  }
+  // 数组
+  for(let i=0;i<N;i++){
+    const b=Math.floor(i/B);
+    const on=b===cur, done=past(b);
+    el('rect',{x:tx(i),y:AY,width:SZ,height:SZ,rx:2,fill:on?'var(--teal)':done?'var(--card)':'var(--bg)',stroke:on||done?'var(--teal)':'var(--line)'},sv);
+    if(i%4===0||i===N-1)txt(String(i),{x:tx(i)+SZ/2,y:AY+SZ+13,'text-anchor':'middle',class:'tiny'},sv);
+  }
+  // 说明框：用当前 block 里一个线程演示公式
+  el('line',{x1:14,y1:300,x2:666,y2:300,stroke:'var(--line)'},sv);
+  if(cur>=0){
+    const t=Math.min(5,B-1),i=cur*B+t;
+    const idle=i>=N;
+    // 标出示范线程
+    el('rect',{x:tx(i)-2,y:TY-2,width:SZ+4,height:SZ+4,rx:4,fill:'none',stroke:'var(--amber)','stroke-width':2.5},sv);
+    txt(`示范：blockIdx.x = ${cur}，threadIdx.x = ${t}`,{x:20,y:326},sv);
+    const f=txt(`i = ${cur} × ${B} + ${t} = ${i}`+(idle?`  ≥ n = ${N} → 越界，不做`:`  → 负责 c[${i}] = a[${i}] + b[${i}]`),{x:20,y:352,class:'code'},sv);
+    f.style.fill=idle?'var(--bad)':'var(--teal)';
+  }else if(k===0){
+    txt('每个线程只知道自己的 blockIdx.x 和 threadIdx.x，靠公式算出全局编号 i',{x:20,y:330},sv);
+    txt('i = blockIdx.x × blockDim.x + threadIdx.x',{x:20,y:356,class:'code'},sv);
+  }else if(showIdle&&!all){
+    const f=txt(g*B>N?`host 端开了 ⌈${N}/${B}⌉ = ${g} 个 block = ${g*B} 个线程，比 n 多 ${g*B-N} 个`:`${g} × ${B} = ${N}，正好够`,{x:20,y:330},sv);
+    txt('kernel 里：if (i < n) c[i] = a[i] + b[i];',{x:20,y:356,class:'code'},sv);
+  }else{
+    txt('host：gridDim.x = (n + B − 1) / B 保证人够；kernel：if (i < n) 保证多的人不捣乱',{x:20,y:330},sv);
+  }
+  // 统计与按钮状态
+  $('sg').textContent=g;$('st').textContent=T;$('si').textContent=T-N;
+  [4,8,16].forEach(v=>$('b'+v).classList.toggle('on',v===B));
+  [27,32].forEach(v=>$('n'+v).classList.toggle('on',v===N));
+}
+function reset(){k=0;draw()}
+function next(){if(k>=frames()-1)return false;k++;draw();return true}
+[4,8,16].forEach(v=>$('b'+v).onclick=()=>{B=v;k=0;draw()});
+[27,32].forEach(v=>$('n'+v).onclick=()=>{N=v;k=0;draw()});
+setupPlayer({captureSeed:1,reset,next},1500);
+</script></body></html>
