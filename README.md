@@ -1,6 +1,6 @@
 # CUDA 从线程到 Tensor Core
 
-**在线阅读：<https://wikieden.github.io/cuda-to-tensor-core/>** · [讲义目录](https://wikieden.github.io/cuda-to-tensor-core/lessons/index.html) · [全部动画](https://wikieden.github.io/cuda-to-tensor-core/animations/index.html) · [复习卡片](https://wikieden.github.io/cuda-to-tensor-core/review.html)
+**在线阅读：<https://wikieden.github.io/cuda-to-tensor-core/>** · [讲义目录](https://wikieden.github.io/cuda-to-tensor-core/lessons/index.html) · [全部动画](https://wikieden.github.io/cuda-to-tensor-core/animations/index.html) · [复习卡片](https://wikieden.github.io/cuda-to-tensor-core/review.html) · [全部讲义书](https://wikieden.github.io/ai-books/)
 
 > 27 章 · 27 个动画（GIF + 可交互页面）· 27 本 notebook · 64 张复习卡片 · 覆盖 study-plan 阶段 1–12（含 9.5）的理论部分；每章的数字都用 `solutions/chapter-code/` 的代码算过、测试核对过
 

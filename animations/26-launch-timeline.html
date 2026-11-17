@@ -32,4 +32,5 @@ function draw(){clear(sv);const P=plan(),tot=Math.max(...P.gpu.map(g=>g.e)),sc=5
  const busy=N*KT,idle=M===3?tot*2-busy:tot-busy;stat('stt',k>=N?tot.toFixed(1):'…');stat('sg',k>=N?Math.max(0,M===3?(tot-busy/2):(tot-busy)).toFixed(1):'…');stat('sc',M===0?N:1);sy();}
 const sy=radio('g1',MODES.map((m,i)=>({id:'m'+i,label:m,value:i})),()=>M,v=>{M=v;reset()});
 setupPlayer({captureSeed:1,reset,next},1000);
-</script></body></html>
+</script><a href="https://wikieden.github.io/ai-books/" style="position:fixed;right:12px;bottom:12px;z-index:99;padding:4px 10px;border-radius:14px;background:rgba(127,127,127,.18);color:inherit;font:13px/1.6 system-ui,sans-serif;text-decoration:none">← 全部讲义书</a>
+</body></html>

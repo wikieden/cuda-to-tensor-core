@@ -42,6 +42,7 @@ footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-
 <a href="../animations/index.html">动画</a>
 <a href="../review.html">复习卡片</a>
 <a href="../lessons/appendix-glossary.html">缩写表</a>
+<a href="https://wikieden.github.io/ai-books/">← 全部讲义书</a>
 </div></header>
 <main>
 <h1 id="15-tensor-corewmmammasync-ldmatrix">第 15 章 · Tensor Core：WMMA、mma.sync 与 ldmatrix</h1><p><a class="btn" href="../animations/15-mma-fragment.html">▶ 打开本章可交互动画</a></p>
@@ -361,5 +362,5 @@ D = gather(d_regs, frag_cd, (16, 8))   # 从 32 个 lane 拼回小矩阵
 <li>故意把 <code>frag_b</code> 里的 <code>2 * t + 8</code> 改成 <code>2 * t + 2</code>，看"不重不漏"的检查哪里报错。</li>
 </ul><nav class="pager"><a href="14-sgemm-register-tiling.html">← 第 14 章 · SGEMM ②：寄存器分块、向量化与 warptiling</a><a href="16-async-copy-pipeline.html">第 16 章 · 异步拷贝与多级流水线：搬下一块的时候算这一块 →</a></nav>
 </main>
-<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a></footer>
+<footer>来自个人学习仓库的对话讲义，含练习作答记录。源码：<a href="https://github.com/wikieden/cuda-to-tensor-core">github.com/wikieden/cuda-to-tensor-core</a>。更多讲义书：<a href="https://wikieden.github.io/ai-books/">AI 算法图解讲义（合集）</a></footer>
 </body></html>

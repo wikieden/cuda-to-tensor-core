@@ -34,4 +34,5 @@ function draw(){clear(sv);const S=state(),C={A:'var(--accent)',B:'var(--teal)',C
  const last=PG*S.pages.A.length-LA;stat('sp',S.next);stat('sw',`A: ${last}`);stat('su',sp);sy();}
 const sy=radio('g1',[1,2,4].map(v=>({id:'p'+v,label:String(v),value:v})),()=>sp,v=>{sp=v;draw()});
 setupPlayer({captureSeed:1,reset,next},1400);
-</script></body></html>
+</script><a href="https://wikieden.github.io/ai-books/" style="position:fixed;right:12px;bottom:12px;z-index:99;padding:4px 10px;border-radius:14px;background:rgba(127,127,127,.18);color:inherit;font:13px/1.6 system-ui,sans-serif;text-decoration:none">← 全部讲义书</a>
+</body></html>
