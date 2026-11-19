@@ -290,7 +290,7 @@ footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-
 </table>
 <h3 id="_10">代码对照：把本章的数字用代码算一遍</h3>
 <blockquote>
-<p>NumPy（Numerical Python：数值 / Python，Python 的数组计算库）。Mac 上没有 NVIDIA GPU，所以代码对照不写真正的 CUDA，而是用 NumPy 在 CPU 上<strong>模拟</strong>同样的规则（线程编号、32 字节一箱、32 个 bank……），把讲义里的数字算一遍；测试负责核对和讲义一致。uv 是 Python 的项目和依赖管理工具，<code>uv run</code> 会自动装好 NumPy。从这一章起每章附录都有这一节。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch01_thread_index.py</code>，配套测试 <code>tests/test_ch01_06.py</code>；同一章的 notebook：<code>notebooks/ch01_thread_index.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU：</p>
+<p>NumPy（Numerical Python：数值 / Python，Python 的数组计算库）。Mac 上没有 NVIDIA GPU，所以代码对照不写真正的 CUDA，而是用 NumPy 在 CPU 上<strong>模拟</strong>同样的规则（线程编号、32 字节一箱、32 个 bank……），把讲义里的数字算一遍；测试负责核对和讲义一致。uv 是 Python 的项目和依赖管理工具，<code>uv run</code> 会自动装好 NumPy。从这一章起每章附录都有这一节。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch01_thread_index.py</code>，配套测试 <code>tests/test_ch01_06.py</code>；同一章的 notebook：<code>notebooks/ch01_thread_index.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。在线版不带代码文件，下面摘了关键几行。Mac 上直接能跑，不需要 GPU：</p>
 <p><code>bash  
 cd cuda-programming/solutions/chapter-code  
 uv run python ch01_thread_index.py   # 一步一步打印  

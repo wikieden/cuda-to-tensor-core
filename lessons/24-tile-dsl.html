@@ -290,7 +290,7 @@ tile 不可变、2 的幂、编译期定，越界编译器管；<br />
 </table>
 <h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
 <blockquote>
-<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch24_tile_model.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch24_tile_model.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（cuTile / Triton 真跑要 NVIDIA GPU [GPU]；这里用 NumPy 模拟 <code>ct.load</code> / <code>ct.store</code> 的 tile space 越界处理）：</p>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch24_tile_model.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch24_tile_model.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。在线版不带代码文件，下面摘了关键几行。Mac 上直接能跑，不需要 GPU（cuTile / Triton 真跑要 NVIDIA GPU [GPU]；这里用 NumPy 模拟 <code>ct.load</code> / <code>ct.store</code> 的 tile space 越界处理）：</p>
 <p><code>bash  
 cd cuda-programming/solutions/chapter-code  
 uv run python ch24_tile_model.py   # 一步一步打印  

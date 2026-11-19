@@ -278,7 +278,7 @@ cubin 只认同代更高小版本，PTX 能给未来的卡现场编；带 a 的�
 </table>
 <h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
 <blockquote>
-<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch25_compile_deploy.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch25_compile_deploy.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真正编译要 nvcc / ptxas（CUDA 工具链）；Mac 上可以用 Godbolt 的在线 nvcc 看 PTX / SASS）：</p>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch25_compile_deploy.py</code>，配套测试 <code>tests/test_ch24_27.py</code>；同一章的 notebook：<code>notebooks/ch25_compile_deploy.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。在线版不带代码文件，下面摘了关键几行。Mac 上直接能跑，不需要 GPU（真正编译要 nvcc / ptxas（CUDA 工具链）；Mac 上可以用 Godbolt 的在线 nvcc 看 PTX / SASS）：</p>
 <p><code>bash  
 cd cuda-programming/solutions/chapter-code  
 uv run python ch25_compile_deploy.py   # 一步一步打印  

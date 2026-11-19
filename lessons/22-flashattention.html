@@ -287,7 +287,7 @@ FA2 晚除 ℓ、按 Q 再并行；FA3 搬算分工、乒乓重叠、上 FP8；F
 </table>
 <h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
 <blockquote>
-<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch22_flashattention.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch22_flashattention.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真正的 FlashAttention kernel 要 GPU [GPU]；这里用 NumPy 按块写一遍前向算法）：</p>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch22_flashattention.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch22_flashattention.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。在线版不带代码文件，下面摘了关键几行。Mac 上直接能跑，不需要 GPU（真正的 FlashAttention kernel 要 GPU [GPU]；这里用 NumPy 按块写一遍前向算法）：</p>
 <p><code>bash  
 cd cuda-programming/solutions/chapter-code  
 uv run python ch22_flashattention.py   # 一步一步打印  

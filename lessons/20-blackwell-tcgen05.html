@@ -308,7 +308,7 @@ footer{max-width:860px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-
 </table>
 <h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
 <blockquote>
-<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch20_tcgen05_tmem.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch20_tcgen05_tmem.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（tcgen05 / TMEM 要 sm_100a [GPU]；块缩放是"先缩放、再取最近的 FP4 值"的数学模拟，不是硬件实现）：</p>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch20_tcgen05_tmem.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch20_tcgen05_tmem.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。在线版不带代码文件，下面摘了关键几行。Mac 上直接能跑，不需要 GPU（tcgen05 / TMEM 要 sm_100a [GPU]；块缩放是"先缩放、再取最近的 FP4 值"的数学模拟，不是硬件实现）：</p>
 <p><code>bash  
 cd cuda-programming/solutions/chapter-code  
 uv run python ch20_tcgen05_tmem.py   # 一步一步打印  

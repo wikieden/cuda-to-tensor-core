@@ -315,7 +315,7 @@ Tensor = 指针 + Layout；硬件指令包成 Atom，换卡只换 Atom。</p>
 </table>
 <h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
 <blockquote>
-<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch19_cute_layout.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch19_cute_layout.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（CuTe 本身是 C++ 模板 / CuTe DSL；这里用几十行 Python 模拟它的下标算法）：</p>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch19_cute_layout.py</code>，配套测试 <code>tests/test_ch19_23.py</code>；同一章的 notebook：<code>notebooks/ch19_cute_layout.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。在线版不带代码文件，下面摘了关键几行。Mac 上直接能跑，不需要 GPU（CuTe 本身是 C++ 模板 / CuTe DSL；这里用几十行 Python 模拟它的下标算法）：</p>
 <p><code>bash  
 cd cuda-programming/solutions/chapter-code  
 uv run python ch19_cute_layout.py   # 一步一步打印  

@@ -248,7 +248,7 @@ multicast 一次读、几家同时收。</p>
 </table>
 <h3 id="_9">代码对照：把本章的数字用代码算一遍</h3>
 <blockquote>
-<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch17_tma_mbarrier.py</code>，配套测试 <code>tests/test_ch13_18.py</code>；同一章的 notebook：<code>notebooks/ch17_tma_mbarrier.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。Mac 上直接能跑，不需要 GPU（真正的 TMA / mbarrier 要 CC 9.0 的 GPU [GPU]；这里模拟 tensor map 的越界补 0 和 mbarrier 的记账）：</p>
+<p>用 NumPy 在 CPU 上模拟同样的规则。代码在仓库本地 <code>cuda-programming/solutions/chapter-code/ch17_tma_mbarrier.py</code>，配套测试 <code>tests/test_ch13_18.py</code>；同一章的 notebook：<code>notebooks/ch17_tma_mbarrier.ipynb</code>（讲解和代码放在一起，一格一格边读边跑）。在线版不带代码文件，下面摘了关键几行。Mac 上直接能跑，不需要 GPU（真正的 TMA / mbarrier 要 CC 9.0 的 GPU [GPU]；这里模拟 tensor map 的越界补 0 和 mbarrier 的记账）：</p>
 <p><code>bash  
 cd cuda-programming/solutions/chapter-code  
 uv run python ch17_tma_mbarrier.py   # 一步一步打印  
