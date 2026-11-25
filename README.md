@@ -73,6 +73,17 @@
 | [26](https://wikieden.github.io/cuda-to-tensor-core/lessons/26-streams-graphs-pdl.html) | 12 | streams、CUDA Graphs、PDL | Graph 省 CPU 下单，PDL 省 GPU 空隙 | [GIF](https://wikieden.github.io/cuda-to-tensor-core/animations/26-launch-timeline.gif) · [▶](https://wikieden.github.io/cuda-to-tensor-core/animations/26-launch-timeline.html) | C60–C62 | 正文完成，练习待做 |
 | [27](https://wikieden.github.io/cuda-to-tensor-core/lessons/27-methodology-wrap-up.html) | 12 | 实战方法论与收尾 | 少搬、多用、边搬边算 | [GIF](https://wikieden.github.io/cuda-to-tensor-core/animations/27-optimization-flow.gif) · [▶](https://wikieden.github.io/cuda-to-tensor-core/animations/27-optimization-flow.html) | C63–C64 | 正文完成，练习待做 |
 
+## 联系与合作
+
+欢迎来信：<wikieden@gmail.com>。可以合作的方向：
+
+- 讲义勘误与建议
+- 课程 / 企业内训
+- 内容合作与转载授权
+- 赞助本系列持续更新
+
+赞助请发邮件联系。
+
 ---
 
 本仓库由私有学习仓库里的脚本 `tools/publish-transformer/build.py` 自动生成，内容摘自讲义目录，不要直接修改这里的文件。
